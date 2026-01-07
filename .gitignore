@@ -1,0 +1,94 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Large files and data (不提交)
+*.npy
+*.npz
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.gguf
+*.ckpt
+
+# Embeddings cache
+embeddings/
+*/embeddings/
+
+# Models (太大了)
+models/
+*/models/
+
+# Results (每次运行都不一样)
+results/
+*/results/
+
+# Logs
+*.log
+logs/
+
+# Temp files
+*.tmp
+*.temp
+1.txt
+
+# Dataset specific (数据集太大)
+Symbolic_and_Logical_Data/GSM8K/
+Symbolic_and_Logical_Data/GSM8K-Aug/
+Symbolic_and_Logical_Data/LILA/
+Symbolic_and_Logical_Data/MetaMathQA/
+Symbolic_and_Logical_Data/Nemotron-Math-Proofs-v1/
+Symbolic_and_Logical_Data/NuminaMath-CoT/
+Symbolic_and_Logical_Data/OpenMathInstruct-1/
+
+Agent_Data/mind2web/
+Agent_Data/toolbench/
+Agent_Data/xlam_60k/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project specific (不提交)
+cursor_*.md
+agent.md
+OpenDataArena-Tool/
+Skills/
+Vision_Language_Data/
+

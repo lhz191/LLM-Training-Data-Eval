@@ -92,4 +92,5 @@ OpenDataArena-Tool/
 Skills/
 Vision_Language_Data/
 
-Agent_Data/api_agent_eval/cache/
+Agent_Data/api_agent_eval/cache/*
+!Agent_Data/api_agent_eval/cache/.gitkeep

@@ -15,15 +15,14 @@ source ~/anaconda3/etc/profile.d/conda.sh
 conda activate base
 
 echo "=========================================="
-echo "Format Check 评估"
+echo "Format Check 评估 (ToolBench)"
 echo "=========================================="
 echo "开始时间: $(date)"
 echo "节点: $(hostname)"
 echo "CPU 核心数: $SLURM_CPUS_PER_TASK"
 echo ""
 
-# 使用 run_full_test.py 运行
-# 默认 toolbench，如需 xlam 改 --dataset xlam 和 output log 路径
+# ToolBench 数据集
 python3 -u run_full_test.py --dataset toolbench --metric format_check --parallel --workers 32
 
 echo ""

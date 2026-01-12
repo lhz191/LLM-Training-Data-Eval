@@ -8,8 +8,6 @@ API Agent Data Loaders
 支持：
 - ToolBench: 多轮对话格式，有真实 API 响应
 - xLAM-60k: 单轮调用格式，只有工具定义
-
-解析函数复用自 evaluate_toolbench_basic.py（经过验证的代码）。
 """
 
 import json
@@ -24,313 +22,6 @@ from data_types import (
     APICall,
     APIAgentSample,
 )
-
-
-# =============================================================================
-# 工具函数（复用自 evaluate_toolbench_basic.py）
-# =============================================================================
-
-def extract_balanced_braces(text: str) -> str:
-    """
-    提取平衡的大括号内容
-    
-    处理嵌套大括号和字符串内的大括号，确保提取完整的 JSON 对象
-    
-    复用自 evaluate_toolbench_basic.py._extract_balanced_braces
-    """
-    if not text or text[0] != '{':
-        return ""
-    
-    depth = 0  # 大括号嵌套深度
-    in_string = False  # 当前是否在字符串内
-    escape = False  # 前一个字符是否是转义符 
-    # {"message": "He said \"Hello\""}
-    
-    for i, char in enumerate(text):
-        if escape:
-            escape = False
-            continue
-        
-        if char == '\\':
-            escape = True
-            continue
-        
-        if char == '"' and not escape:
-            in_string = not in_string
-            continue
-        
-        if in_string:
-            continue
-        
-        if char == '{':
-            depth += 1
-        elif char == '}':
-            depth -= 1
-            if depth == 0:
-                return text[:i+1]
-    
-    # 不完整，返回全部（让后续解析器处理错误）
-    return text
-
-
-def fix_json_newlines(json_str: str) -> str:
-    """
-    处理嵌套 JSON 解析时产生的换行符问题
-    
-    【背景】
-    ToolBench 数据结构是嵌套 JSON：
-      原始文件: {"value": "Action Input: {\"answer\": \"Line1\\nLine2\"}"}
-                                                          ^^
-                                                文件中是转义序列 \n
-    
-    【问题】
-    当 json.load() 解析外层 JSON 时：
-      value = 'Action Input: {"answer": "Line1\nLine2"}'
-                                              ^
-                                    变成了真正的换行符 (ASCII 10)
-    
-    此时如果对内层 JSON 再 json.loads()，会失败：
-      json.loads('{"answer": "Line1\nLine2"}')  # ❌ Invalid control character
-    
-    【解决方案】
-    把字符串值内的真正换行符转回 \n 转义序列：
-      '{"answer": "Line1\nLine2"}'  →  '{"answer": "Line1\\nLine2"}'
-                       ^                              ^^
-                 真正换行符                        转义序列
-    
-    【注意】
-    只转换字符串值内的换行符，不转换 JSON 结构中的换行符：
-      {"a": "line1\nline2"}  中字符串内的 \n 需要转换 ✅
-      {\n"a": "b"}          中结构的 \n 不需要转换 ❌
-    
-    【验证】
-    - 如果原数据没问题：直接解析成功，fix 后结果相同
-    - 如果有嵌套解析问题：直接解析失败，fix 后成功（不是数据问题）
-    - 如果是真正的数据问题：fix 后仍然失败（报告为数据质量问题）
-    
-    复用自 evaluate_toolbench_basic.py._fix_json_newlines
-    """
-    result = []
-    in_string = False
-    i = 0
-    
-    while i < len(json_str):
-        char = json_str[i]
-        
-        # 1. 处理转义字符 \x
-        if char == '\\' and i + 1 < len(json_str):
-            result.append(char)
-            result.append(json_str[i + 1])
-            i += 2
-            continue
-        
-        # 2. 处理引号 "
-        if char == '"':
-            in_string = not in_string
-            result.append(char)
-            i += 1
-            continue
-        
-        # 3. 处理其他字符
-        # 在字符串内，将实际换行符替换为 \n
-        if in_string and char == '\n':
-            result.append('\\n')
-        elif in_string and char == '\r':
-            result.append('\\r')
-        elif in_string and char == '\t':
-            result.append('\\t')
-        else:
-            result.append(char)
-        
-        i += 1
-    
-    return ''.join(result)
-
-
-def is_valid_api_name(name: str) -> bool:
-    """
-    判断是否是有效的 API 名
-    
-    复用自 evaluate_toolbench_basic.py._parse_action 中的内部函数
-    """
-    if not name:
-        return False
-    # 过滤纯数字+标点（如 1., 2., 3.）
-    if re.match(r'^\d+\.?$', name):
-        return False
-    # 过滤常见的描述性词汇（如 Call, Use, Invoke 等）
-    if name.lower() in ['call', 'use', 'invoke', 'execute', 'run', 'the', 'a', 'an', 'to', 'for', 'with']:
-        return False
-    # 过滤纯符号（如 -, *, >, ##, **）
-    if re.match(r'^[\-\*\>\#\.\,\!\?\:\;\(\)\[\]\{\}]+$', name):
-        return False
-    # 过滤太短且不包含下划线的（如 I, A, The）
-    if len(name) <= 2 and '_' not in name:
-        return False
-    # 必须包含至少一个字母
-    if not re.search(r'[a-zA-Z]', name):
-        return False
-    return True
-
-
-def parse_system_apis(system_text: str) -> List[Dict]:
-    """
-    从 system prompt 中解析 API 定义
-    
-    ToolBench 的 API 定义格式：
-    Specifically, you have access to the following APIs: [{...}, {...}, ...]
-    
-    复用自 evaluate_toolbench_basic.py._parse_system_apis
-    """
-    apis = []
-    
-    # 找到 API 列表
-    marker = "Specifically, you have access to the following APIs:"
-    start = system_text.find(marker)
-    if start == -1:
-        return apis
-    
-    api_text = system_text[start + len(marker):].strip()
-    
-    try:
-        # 使用 ast.literal_eval 解析 Python 格式的列表
-        apis = ast.literal_eval(api_text)
-    except:
-        # 尝试 JSON 解析
-        try:
-            apis = json.loads(api_text)
-        except:
-            pass
-    
-    return apis if isinstance(apis, list) else []
-
-
-def parse_action(assistant_text: str) -> Tuple[Optional[str], Optional[Dict]]:
-    """
-    从 assistant 回复中解析 Action 和 Action Input
-    
-    格式：
-    Thought: ...
-    Action: api_name
-    Action Input: {"param": "value"}
-    
-    注意：某些数据中 LLM 可能先写描述性的 Action:，后面才是真正的 API 调用
-    例如：
-        Action: 1. Call the "some_api" function...
-        ...
-        Action: some_api_for_tool
-        Action Input: {...}
-    
-    策略：
-    1. 找所有 Action: 匹配
-    2. 过滤明显无效的 API 名（如数字+标点、纯符号等）
-    3. 优先选择有效的 API 名
-    
-    复用自 evaluate_toolbench_basic.py._parse_action
-    """
-    action_name = None
-    action_input = None
-    
-    # 解析 Action - 使用 findall 找所有匹配，然后过滤选择最佳
-    action_matches = re.findall(r'Action:\s*(\S+)', assistant_text)
-    
-    # 选择最后一个有效的 API 名（从后往前找）
-    # 因为 LLM 有时会先写描述性的 Action:，真正的 API 调用在后面
-    for match in reversed(action_matches):
-        candidate = match.strip()
-        if is_valid_api_name(candidate):
-            action_name = candidate
-            break
-    
-    # 如果没有找到有效的，使用最后一个匹配作为 fallback
-    if action_name is None and action_matches:
-        action_name = action_matches[-1].strip()
-    
-    # 解析 Action Input - 使用智能括号匹配
-    input_start = assistant_text.find('Action Input:')
-    if input_start != -1:
-        # 找到第一个 {
-        brace_start = assistant_text.find('{', input_start)
-        if brace_start != -1:
-            # 使用智能括号匹配提取完整的 JSON 对象
-            input_str = extract_balanced_braces(assistant_text[brace_start:])
-            if input_str:
-                # 处理嵌套 JSON 解析问题
-                input_str_fixed = fix_json_newlines(input_str)
-                
-                try:
-                    action_input_direct = json.loads(input_str)
-                    # 直接解析成功，验证 fix 后结果一致
-                    action_input_fixed = json.loads(input_str_fixed)
-                    assert action_input_direct == action_input_fixed, \
-                        f"fix_json_newlines 改变了数据内容！"
-                    action_input = action_input_direct
-                except json.JSONDecodeError:
-                    # 直接解析失败，尝试 fix 后解析
-                    try:
-                        action_input = json.loads(input_str_fixed)
-                    except:
-                        # fix 后仍失败，尝试 ast.literal_eval
-                        try:
-                            action_input = ast.literal_eval(input_str)
-                        except:
-                            pass
-    
-    return action_name, action_input
-
-
-def extract_thought(assistant_text: str) -> str:
-    """
-    从 assistant 回复中提取 Thought 部分
-    
-    复用自 evaluate_toolbench_basic.py._extract_thought
-    """
-    # Thought: ... Action: 之间的内容
-    match = re.search(r'Thought:\s*(.*?)(?:Action:|$)', assistant_text, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    return ""
-
-
-def extract_step_number(id_str: str) -> Optional[int]:
-    """
-    从 id 中提取 Step 数字
-    
-    复用自 evaluate_toolbench_basic.py._extract_step_number
-    """
-    if id_str.startswith('Step '):
-        match = re.match(r'Step (\d+):', id_str)
-        if match:
-            return int(match.group(1))
-    return None
-
-
-def extract_query(id_str: str) -> str:
-    """
-    从 id 中提取用户指令
-    
-    复用自 evaluate_toolbench_basic.py._extract_query
-    """
-    if ':' in id_str:
-        return ':'.join(id_str.split(':')[1:]).strip()
-    return id_str
-
-
-def parse_function_response(func_value: str) -> Optional[str]:
-    """
-    解析 function 响应
-    
-    训练数据格式: {"error": "...", "response": "..."}
-    
-    由于 ToolBench 数据中 response 字段可能是 Python repr 格式（单引号），
-    标准 JSON 解析会失败。直接返回原始字符串。
-    
-    判断是否失败时，用关键词搜索（timeout, exception, failed 等）。
-    
-    Returns:
-        原始 function value 字符串
-    """
-    return func_value if func_value else None
 
 
 # =============================================================================
@@ -359,6 +50,193 @@ class ToolBenchLoader:
     def __init__(self, dataset_path: str):
         self.dataset_path = dataset_path
         self.data: List[Dict] = []
+    
+    # =========================================================================
+    # ToolBench 解析辅助方法（静态方法）
+    # =========================================================================
+    
+    @staticmethod
+    def _extract_balanced_braces(text: str) -> str:
+        """提取平衡的大括号内容，处理嵌套和字符串内的大括号"""
+        if not text or text[0] != '{':
+            return ""
+        
+        depth = 0
+        in_string = False
+        escape = False
+        
+        for i, char in enumerate(text):
+            if escape:
+                escape = False
+                continue
+            
+            if char == '\\':
+                escape = True
+                continue
+            
+            if char == '"' and not escape:
+                in_string = not in_string
+                continue
+            
+            if in_string:
+                continue
+            
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    return text[:i+1]
+        
+        return text
+    
+    @staticmethod
+    def _fix_json_newlines(json_str: str) -> str:
+        """处理嵌套 JSON 解析时产生的换行符问题"""
+        result = []
+        in_string = False
+        i = 0
+        
+        while i < len(json_str):
+            char = json_str[i]
+            
+            if char == '\\' and i + 1 < len(json_str):
+                result.append(char)
+                result.append(json_str[i + 1])
+                i += 2
+                continue
+            
+            if char == '"':
+                in_string = not in_string
+                result.append(char)
+                i += 1
+                continue
+            
+            if in_string and char == '\n':
+                result.append('\\n')
+            elif in_string and char == '\r':
+                result.append('\\r')
+            elif in_string and char == '\t':
+                result.append('\\t')
+            else:
+                result.append(char)
+            
+            i += 1
+        
+        return ''.join(result)
+    
+    @staticmethod
+    def _is_valid_api_name(name: str) -> bool:
+        """判断是否是有效的 API 名"""
+        if not name:
+            return False
+        if re.match(r'^\d+\.?$', name):
+            return False
+        if name.lower() in ['call', 'use', 'invoke', 'execute', 'run', 'the', 'a', 'an', 'to', 'for', 'with']:
+            return False
+        if re.match(r'^[\-\*\>\#\.\,\!\?\:\;\(\)\[\]\{\}]+$', name):
+            return False
+        if len(name) <= 2 and '_' not in name:
+            return False
+        if not re.search(r'[a-zA-Z]', name):
+            return False
+        return True
+    
+    @staticmethod
+    def _parse_system_apis(system_text: str) -> List[Dict]:
+        """从 system prompt 中解析 API 定义列表"""
+        apis = []
+        
+        marker = "Specifically, you have access to the following APIs:"
+        start = system_text.find(marker)
+        if start == -1:
+            return apis
+        
+        api_text = system_text[start + len(marker):].strip()
+        
+        try:
+            apis = ast.literal_eval(api_text)
+        except:
+            try:
+                apis = json.loads(api_text)
+            except:
+                pass
+        
+        return apis if isinstance(apis, list) else []
+    
+    @staticmethod
+    def _parse_action(assistant_text: str) -> Tuple[Optional[str], Optional[Dict]]:
+        """从 assistant 回复中解析 Action 和 Action Input"""
+        action_name = None
+        action_input = None
+        
+        action_matches = re.findall(r'Action:\s*(\S+)', assistant_text)
+        
+        for match in reversed(action_matches):
+            candidate = match.strip()
+            if ToolBenchLoader._is_valid_api_name(candidate):
+                action_name = candidate
+                break
+        
+        if action_name is None and action_matches:
+            action_name = action_matches[-1].strip()
+        
+        input_start = assistant_text.find('Action Input:')
+        if input_start != -1:
+            brace_start = assistant_text.find('{', input_start)
+            if brace_start != -1:
+                input_str = ToolBenchLoader._extract_balanced_braces(assistant_text[brace_start:])
+                if input_str:
+                    input_str_fixed = ToolBenchLoader._fix_json_newlines(input_str)
+                    
+                    try:
+                        action_input_direct = json.loads(input_str)
+                        action_input_fixed = json.loads(input_str_fixed)
+                        assert action_input_direct == action_input_fixed
+                        action_input = action_input_direct
+                    except json.JSONDecodeError:
+                        try:
+                            action_input = json.loads(input_str_fixed)
+                        except:
+                            try:
+                                action_input = ast.literal_eval(input_str)
+                            except:
+                                pass
+        
+        return action_name, action_input
+    
+    @staticmethod
+    def _extract_thought(assistant_text: str) -> str:
+        """从 assistant 回复中提取 Thought 部分"""
+        match = re.search(r'Thought:\s*(.*?)(?:Action:|$)', assistant_text, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        return ""
+    
+    @staticmethod
+    def _extract_step_number(id_str: str) -> Optional[int]:
+        """从 id 中提取 Step 数字"""
+        if id_str.startswith('Step '):
+            match = re.match(r'Step (\d+):', id_str)
+            if match:
+                return int(match.group(1))
+        return None
+    
+    @staticmethod
+    def _extract_query(id_str: str) -> str:
+        """从 id 中提取用户指令"""
+        if ':' in id_str:
+            return ':'.join(id_str.split(':')[1:]).strip()
+        return id_str
+    
+    @staticmethod
+    def _parse_function_response(func_value: str) -> Optional[str]:
+        """解析 function 响应，直接返回原始字符串"""
+        return func_value if func_value else None
+    
+    # =========================================================================
+    # 数据加载和解析方法
+    # =========================================================================
     
     def load(self) -> List[Dict]:
         """加载原始 JSON 数据"""
@@ -416,8 +294,6 @@ class ToolBenchLoader:
         """
         解析单条 ToolBench 记录
         
-        使用复用自 evaluate_toolbench_basic.py 的解析函数.
-        
         Args:
             record: 原始记录
             idx: 记录索引
@@ -428,8 +304,8 @@ class ToolBenchLoader:
         try:
             # === 1. 解析 ID 和 Query ===
             id_str = record.get('id', '')
-            step_number = extract_step_number(id_str)
-            query = extract_query(id_str)
+            step_number = self._extract_step_number(id_str)
+            query = self._extract_query(id_str)
             
             conversations = record.get('conversations', [])
             if not conversations:
@@ -439,7 +315,7 @@ class ToolBenchLoader:
             tools = []
             for conv in conversations:
                 if conv.get('from') == 'system':
-                    api_dicts = parse_system_apis(conv.get('value', ''))
+                    api_dicts = self._parse_system_apis(conv.get('value', ''))
                     tools = [self._dict_to_tool_definition(api) for api in api_dicts]
                     tools = [t for t in tools if t is not None]
                     break
@@ -472,8 +348,8 @@ class ToolBenchLoader:
                     assistant_text = conv.get('value', '')
                     raw_assistant_texts.append(assistant_text)  # 保存原始文本
                     
-                    action_name, action_input = parse_action(assistant_text)
-                    thought = extract_thought(assistant_text)
+                    action_name, action_input = self._parse_action(assistant_text)
+                    thought = self._extract_thought(assistant_text)
                     
                     if action_name:
                         # 查找下一个 function 响应
@@ -481,7 +357,7 @@ class ToolBenchLoader:
                         
                         if i + 1 < len(conversations) and conversations[i + 1].get('from') == 'function':
                             func_value = conversations[i + 1].get('value', '')
-                            response = parse_function_response(func_value)
+                            response = self._parse_function_response(func_value)
                         
                         # 检查是否是 Finish - 也记录为 api_call（用于 format_check）
                         if action_name == 'Finish':
@@ -564,6 +440,11 @@ class ToolBenchLoader:
                 "optional": ["param2"]
             }
         }
+        
+        ToolBench 的 required/optional 判断规则：
+        - 在 required 列表中 → required=True, optional=False
+        - 在 optional 列表中 → required=False, optional=True
+        - 都没出现 → required=False, optional=True（默认可选）
         """
         name = api.get('name', '')
         if not name:
@@ -583,11 +464,26 @@ class ToolBenchLoader:
                 if not isinstance(param_info, dict):
                     continue
                 
-                # 判断是否可选：忠实于源数据
-                # 在 optional 列表中 → True
-                # 在 required 列表中 → False
-                # 两者都不在 → False（默认必需）
-                is_optional = param_name in optional_list
+                # 判断 required/optional（互补）
+                # 在 required 列表中 → required=True, optional=False
+                # 在 optional 列表中 → required=False, optional=True
+                # 都没出现 → required=False, optional=True（默认可选）
+                in_required = param_name in required_list
+                in_optional = param_name in optional_list
+                
+                # 四种情况显式处理，保留异常状态供 format check 检测
+                if in_required and in_optional:
+                    # 同时出现在两个列表中（数据异常）
+                    is_required, is_optional = True, True
+                elif in_required and not in_optional:
+                    # 只在 required 中
+                    is_required, is_optional = True, False
+                elif not in_required and in_optional:
+                    # 只在 optional 中
+                    is_required, is_optional = False, True
+                else:
+                    # 都没出现，默认可选
+                    is_required, is_optional = False, True
                 
                 # 提取 example_value 到 metadata
                 metadata = {}
@@ -599,6 +495,7 @@ class ToolBenchLoader:
                     type=param_info.get('type', 'string'),
                     description=param_info.get('description', ''),
                     default=None,  # ToolBench 没有 default，只有 example_value
+                    required=is_required,
                     optional=is_optional,
                     metadata=metadata
                 )
@@ -747,6 +644,10 @@ class XLAMLoader:
                 ...
             }
         }
+        
+        xLAM 的 required/optional 判断规则：
+        - type 中带 'optional' → required=False, optional=True
+        - type 中不带 'optional' → required=True, optional=False
         """
         name = tool_data.get('name', '')
         if not name:
@@ -764,15 +665,20 @@ class XLAMLoader:
                 if isinstance(param_info, dict):
                     param_type = param_info.get('type', 'str')
                     
-                    # 判断是否可选：只看 type 字段中是否包含 'optional'
-                    # 忠实于源数据，不因为有 default 就认为是 optional
-                    is_optional = 'optional' in param_type.lower()
+                    # 判断 required/optional（互补）
+                    # type 中带 'optional' → optional=True, required=False
+                    # type 中不带 'optional' → optional=False, required=True
+                    if 'optional' in param_type.lower():
+                        is_required, is_optional = False, True
+                    else:
+                        is_required, is_optional = True, False
                     
                     param = Parameter(
                         name=param_name,
                         type=param_type.split(',')[0].strip(),  # 去掉 ", optional" 部分
                         description=param_info.get('description', ''),
                         default=param_info.get('default'),
+                        required=is_required,
                         optional=is_optional,
                         metadata={}
                     )
@@ -838,6 +744,7 @@ def print_sample(sample: APIAgentSample):
             print(f"             type: {p.type}")
             print(f"             description: {p.description[:80]}..." if len(p.description) > 80 else f"             description: {p.description}")
             print(f"             default: {p.default}")
+            print(f"             required: {p.required}")
             print(f"             optional: {p.optional}")
             if p.metadata:
                 print(f"             metadata: {p.metadata}")

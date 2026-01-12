@@ -298,18 +298,18 @@ def compute_format_check_parallel(
                 if result['has_errors']:
                     with_errors += 1
                     batch_error_ids.append(result['sample_id'])
-                    error_samples.append({
-                        'sample_id': result['sample_id'],
-                        'errors': result['errors'],
-                        'warnings': result['warnings'],
-                    })
+                        error_samples.append({
+                            'sample_id': result['sample_id'],
+                            'errors': result['errors'],
+                            'warnings': result['warnings'],
+                        })
                 elif result['has_warnings']:
                     with_warnings += 1
                     passed += 1
-                    warning_samples.append({
-                        'sample_id': result['sample_id'],
-                        'warnings': result['warnings'],
-                    })
+                        warning_samples.append({
+                            'sample_id': result['sample_id'],
+                            'warnings': result['warnings'],
+                        })
                 else:
                     passed += 1
                 

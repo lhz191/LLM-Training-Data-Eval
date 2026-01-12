@@ -32,6 +32,7 @@ import os
 import re
 import json
 import glob
+import time
 from typing import List, Dict, Any, Tuple, Optional
 from collections import Counter
 
@@ -40,6 +41,71 @@ from api_executor import (
     FormatChecker, ExecutabilityChecker,
     register_format_checker, register_executability_checker
 )
+
+
+# =============================================================================
+# LLM 配置（用于 LLM Judge）
+# =============================================================================
+
+LLM_API_KEY = 'sk-o0QqcwC8XNHU6gGT7CYdMSQGJQQMtjKJSqw6K9G21IaoOElt'
+LLM_BASE_URL = 'http://35.220.164.252:3888/v1/'
+LLM_MODEL = 'gpt-4.1'
+
+
+# =============================================================================
+# LLM Judge Prompt 模板
+# =============================================================================
+
+DERIVABILITY_PROMPT = """你是一个数据质量评估专家。请判断以下 Agent 最终答案是否可以从 API 响应中推导出来。
+
+【API 响应】
+{api_responses}
+
+【最终答案】
+{final_answer}
+
+请判断：最终答案中的关键信息是否能在 API 响应中找到支持？是否存在"编造"或"幻觉"的内容？
+
+判断标准：
+- 只要答案如实反映了 API 响应的内容，就应该判定为 derivable=true
+- 如果 API 返回空结果，答案如实说明"没有数据"也是正确的
+- 只有当答案包含 API 响应中完全不存在的信息时，才判定为 derivable=false
+
+请以 JSON 格式输出：
+```json
+{{
+    "derivable": true/false,
+    "reason": "简要说明判断理由"
+}}
+```
+
+只输出 JSON，不要其他内容。"""
+
+
+RELEVANCE_PROMPT = """你是一个数据质量评估专家。请判断以下 Agent 最终答案是否正确回答了用户的查询。
+
+【用户查询】
+{query}
+
+【最终答案】
+{final_answer}
+
+请判断：最终答案是否回应了用户的问题？
+
+判断标准：
+- 只要答案针对用户的问题给出了相关回应，就应该判定为 relevant=true
+- 如果查询的数据不存在，答案如实说明"没有数据"也算正确回答
+- 只有当答案完全偏题、答非所问时，才判定为 relevant=false
+
+请以 JSON 格式输出：
+```json
+{{
+    "relevant": true/false,
+    "reason": "简要说明判断理由"
+}}
+```
+
+只输出 JSON，不要其他内容。"""
 
 
 # =============================================================================
@@ -130,10 +196,10 @@ class ToolBenchFormatChecker(FormatChecker):
             errors.append("Sample missing or empty 'query'")
         
         if not sample.tools:
-            warnings.append("Sample has no tools defined")
+            errors.append("Sample has no tools defined")
         
         if not sample.api_calls:
-            warnings.append("Sample has no API calls")
+            errors.append("Sample has no API calls")
         
         # === 4. 工具定义检查（统一接口） ===
         for i, tool in enumerate(sample.tools):
@@ -183,13 +249,27 @@ class ToolBenchFormatChecker(FormatChecker):
                 if not param.name:
                     errors.append(f"Tool {idx} ({tool.name}) Parameter {j}: missing 'name'")
                 if not param.type:
-                    warnings.append(f"Tool {idx} ({tool.name}) Parameter {j} ({param.name}): missing 'type'")
+                    errors.append(f"Tool {idx} ({tool.name}) Parameter {j} ({param.name}): missing 'type'")
+        
+                # required 和 optional 互补性检查
+                # 同为 True 或同为 False 都是错误
+                if param.required == param.optional:
+                    if param.required and param.optional:
+                        errors.append(
+                            f"Tool {idx} ({tool.name}) param '{param.name}': "
+                            f"INVALID STATE - both required and optional are True"
+                        )
+                    else:
+                        errors.append(
+                            f"Tool {idx} ({tool.name}) param '{param.name}': "
+                            f"INVALID STATE - both required and optional are False"
+                        )
         
         # Finish 函数额外检查
         if tool.name == 'Finish':
-            required_params = [p.name for p in (tool.parameters or []) if not p.optional]
+            required_params = [p.name for p in (tool.parameters or []) if p.required]
             if 'return_type' not in required_params:
-                warnings.append(f"Tool {idx} (Finish): 'return_type' should be in required parameters")
+                errors.append(f"Tool {idx} (Finish): 'return_type' should be in required parameters")
         
         return errors, warnings
     
@@ -456,10 +536,15 @@ class ToolBenchExecutabilityChecker(ExecutabilityChecker):
         Args:
             toolenv_path: toolenv 工具库路径，用于全局 API 存在性检查
                          如果为 None，则跳过 toolenv 检查
-            cache_dir: API 映射缓存目录，如果为 None 则不使用缓存
+            cache_dir: API 映射缓存目录，默认为当前目录下的 cache/
         """
         self.toolenv_path = toolenv_path
-        self.cache_dir = cache_dir
+        # 默认使用当前目录下的 cache 目录
+        if cache_dir is None:
+            import os
+            self.cache_dir = os.path.join(os.path.dirname(__file__), 'cache')
+        else:
+            self.cache_dir = cache_dir
         
         # API 映射表：{标准化API名: {url, method, host, required_parameters, ...}}
         self.api_mapping: Dict[str, Dict[str, Any]] = {}
@@ -592,16 +677,9 @@ class ToolBenchExecutabilityChecker(ExecutabilityChecker):
             if self.toolenv_path and self.api_mapping:
                 api_key = call.name.lower()
                 if api_key not in self.api_mapping:
-                    # 尝试模糊匹配
-                    found = False
-                    for key in self.api_mapping:
-                        if key.startswith(api_key) or api_key.startswith(key):
-                            found = True
-                            break
-                    if not found:
-                        warnings.append(f"API Call {i}: API '{call.name}' not found in toolenv mapping")
+                    errors.append(f"API Call {i}: API '{call.name}' not found in toolenv mapping")
             
-            # 2.3 Required Parameter Check - 必需参数检查
+            # 2.3 Required Parameter Check (Sample Tool) - 基于样本内工具定义的必需参数检查
             if call.name in tool_map:
                 tool = tool_map[call.name]
                 provided_args = set(call.arguments.keys()) if call.arguments else set()
@@ -610,40 +688,60 @@ class ToolBenchExecutabilityChecker(ExecutabilityChecker):
                     if not param.optional and param.name not in provided_args:
                         if param.default is None:
                             errors.append(
-                                f"API Call {i} ({call.name}): missing required parameter '{param.name}'"
+                                f"API Call {i} ({call.name}): missing required parameter '{param.name}' (sample tool)"
                             )
+            
+            # 2.4 Required Parameter Check (Toolenv) - 基于全局工具库的必需参数检查
+            if self.toolenv_path and self.api_mapping:
+                api_key = call.name.lower()
+                if api_key in self.api_mapping:
+                    api_info = self.api_mapping[api_key]
+                    provided_args = set(call.arguments.keys()) if call.arguments else set()
+                    
+                    # 检查 toolenv 中定义的 required_parameters
+                    for req_param in api_info.get('required_parameters', []):
+                        param_name = req_param.get('name', '') if isinstance(req_param, dict) else str(req_param)
+                        # 获取 default 值（toolenv 格式：{"name": "...", "default": "..."}）
+                        param_default = req_param.get('default', '') if isinstance(req_param, dict) else ''
+                        
+                        # 只有当：1) 参数未提供 且 2) 没有 default 值时，才报错
+                        if param_name and param_name not in provided_args:
+                            if not param_default:  # default 为空字符串或 None 时才报错
+                                errors.append(
+                                    f"API Call {i} ({call.name}): missing required parameter '{param_name}' (toolenv)"
+                                )
         
-        # 3. Train Derivability - 检查 final_answer 是否能从 API 响应推导
+        # 3. Train Derivability - 检查 final_answer 是否能从 API 响应推导（LLM Judge）
         if sample.final_answer:
             # 收集所有 API 响应
             all_responses = []
             for call in sample.api_calls:
                 if call.name != 'Finish' and call.response:
-                    all_responses.append(f"[{call.name}]: {str(call.response)[:2000]}")
+                    all_responses.append(f"[{call.name}]: {str(call.response)}")
             
             if all_responses:
                 all_responses_text = "\n".join(all_responses)
-                derivable, deriv_info = self._check_keyword_derivability(
+                derivable, reason = self._check_derivability_llm(
                     sample.final_answer, all_responses_text
                 )
                 stats['train_derivability'] = {
                     'derivable': derivable,
-                    'info': deriv_info,
+                    'reason': reason,
                 }
                 if not derivable:
-                    warnings.append(f"Train Derivability: {deriv_info}")
+                    errors.append(f"Train Derivability: {reason}")
         
-        # 4. Query-Answer Relevance - 检查 final_answer 是否回答了 query
+        # 4. Query-Answer Relevance - 检查 final_answer 是否回答了 query（LLM Judge）
         if sample.final_answer and sample.query:
-            relevant, rel_info = self._check_keyword_derivability(
+            relevant, reason = self._check_relevance_llm(
                 sample.query, sample.final_answer
             )
             stats['query_relevance'] = {
                 'relevant': relevant,
-                'info': rel_info,
+                'reason': reason,
             }
             if not relevant:
-                warnings.append(f"Query-Answer Relevance: {rel_info}")
+                errors.append(f"Query-Answer Relevance: {reason}")
         
         return errors, warnings, stats
     
@@ -710,6 +808,128 @@ class ToolBenchExecutabilityChecker(ExecutabilityChecker):
             info += f" | Missing: {[k for k, _ in not_matched[:5]]}"
         
         return derivable, info
+    
+    def _check_derivability_llm(
+        self, 
+        final_answer: str, 
+        api_responses: str,
+        max_retries: int = 3
+    ) -> Tuple[bool, str]:
+        """
+        使用 LLM 作为 Judge 检查答案可推导性
+        
+        Args:
+            final_answer: 最终答案
+            api_responses: API 响应文本
+            max_retries: 最大重试次数
+        
+        Returns:
+            (derivable: bool, reason: str)
+        """
+        try:
+            from openai import OpenAI
+        except ImportError:
+            return False, "OpenAI library not installed"
+        
+        prompt = DERIVABILITY_PROMPT.format(
+            api_responses=api_responses,
+            final_answer=final_answer
+        )
+        
+        client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+        
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model=LLM_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1,
+                    max_tokens=500
+                )
+                
+                content = response.choices[0].message.content.strip()
+                
+                # 提取 JSON
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0].strip()
+                
+                result = json.loads(content)
+                derivable = result.get('derivable', False)
+                reason = result.get('reason', '')
+                
+                return derivable, reason
+                
+            except json.JSONDecodeError as e:
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+        
+        return False, "LLM call failed"
+    
+    def _check_relevance_llm(
+        self, 
+        query: str, 
+        final_answer: str,
+        max_retries: int = 3
+    ) -> Tuple[bool, str]:
+        """
+        使用 LLM 作为 Judge 检查查询-答案相关性
+        
+        Args:
+            query: 用户查询
+            final_answer: 最终答案
+            max_retries: 最大重试次数
+        
+        Returns:
+            (relevant: bool, reason: str)
+        """
+        try:
+            from openai import OpenAI
+        except ImportError:
+            return False, "OpenAI library not installed"
+        
+        prompt = RELEVANCE_PROMPT.format(
+            query=query,
+            final_answer=final_answer
+        )
+        
+        client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+        
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model=LLM_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1,
+                    max_tokens=500
+                )
+                
+                content = response.choices[0].message.content.strip()
+                
+                # 提取 JSON
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0].strip()
+                
+                result = json.loads(content)
+                relevant = result.get('relevant', False)
+                reason = result.get('reason', '')
+                
+                return relevant, reason
+                
+            except json.JSONDecodeError as e:
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+        
+        return False, "LLM call failed"
 
 
 # =============================================================================
@@ -748,7 +968,7 @@ class ToolBenchDynamicChecker:
                  rapidapi_key: Optional[str] = None,
                  toolenv_path: Optional[str] = None,
                  cache_dir: Optional[str] = None,
-                 timeout: int = 30):
+                 timeout: int = 180):  # 默认 3 分钟超时
         """
         初始化动态检查器
         
@@ -756,7 +976,7 @@ class ToolBenchDynamicChecker:
             rapidapi_key: RapidAPI Key，如果为 None 则尝试从环境变量读取
             toolenv_path: toolenv 工具库路径
             cache_dir: API 映射缓存目录
-            timeout: 单个 API 调用的超时时间（秒）
+            timeout: 单个 API 调用的超时时间（秒），默认 180 秒（3 分钟）
         """
         # 获取 API Key
         self.rapidapi_key = rapidapi_key or os.environ.get('RAPIDAPI_KEY')
@@ -788,18 +1008,23 @@ class ToolBenchDynamicChecker:
         # 尝试从缓存加载
         if cache_path and not force_rebuild and os.path.exists(cache_path):
             try:
+                print(f"从缓存加载 API 映射: {cache_path}", flush=True)
                 with open(cache_path, 'r', encoding='utf-8') as f:
                     self.api_mapping = json.load(f)
+                print(f"已加载 {len(self.api_mapping):,} 个 API 定义", flush=True)
                 self._mapping_loaded = True
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"缓存加载失败: {e}，重新构建...", flush=True)
         
         if not os.path.exists(self.toolenv_path):
+            print(f"toolenv 路径不存在: {self.toolenv_path}", flush=True)
             return
         
         # 遍历所有 JSON 文件
+        print(f"从 toolenv 构建 API 映射: {self.toolenv_path}", flush=True)
         json_files = glob.glob(os.path.join(self.toolenv_path, '**', '*.json'), recursive=True)
+        print(f"找到 {len(json_files):,} 个 JSON 文件", flush=True)
         
         for json_file in json_files:
             try:
@@ -830,14 +1055,16 @@ class ToolBenchDynamicChecker:
                 pass
         
         self._mapping_loaded = True
+        print(f"已构建 {len(self.api_mapping):,} 个 API 定义", flush=True)
         
         # 保存到缓存
         if cache_path:
             try:
                 with open(cache_path, 'w', encoding='utf-8') as f:
                     json.dump(self.api_mapping, f, ensure_ascii=False)
-            except Exception:
-                pass
+                print(f"已保存缓存到: {cache_path}", flush=True)
+            except Exception as e:
+                print(f"保存缓存失败: {e}", flush=True)
     
     def _call_rapidapi(self, api_info: Dict, params: Dict) -> Tuple[bool, Optional[str], Any]:
         """
@@ -919,54 +1146,66 @@ class ToolBenchDynamicChecker:
             else:
                 return False, f"Request error: {str(e)}", None
     
-    def _check_keyword_derivability(self, source_text: str, target_text: str) -> Tuple[bool, str]:
+    def _check_derivability_llm(
+        self, 
+        final_answer: str, 
+        api_responses: str,
+        max_retries: int = 3
+    ) -> Tuple[bool, str]:
         """
-        关键词匹配检查答案可推导性
+        使用 LLM 作为 Judge 检查答案可推导性
+        
+        Args:
+            final_answer: 最终答案
+            api_responses: API 响应文本
+            max_retries: 最大重试次数
+        
+        Returns:
+            (derivable: bool, reason: str)
         """
-        # 提取数字
-        numbers = re.findall(r'\b\d+(?:\.\d+)?(?:%|°[CF]?)?\b', source_text)
+        try:
+            from openai import OpenAI
+        except ImportError:
+            return False, "OpenAI library not installed"
         
-        # 提取专有名词
-        proper_nouns = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', source_text)
+        prompt = DERIVABILITY_PROMPT.format(
+            api_responses=api_responses,
+            final_answer=final_answer
+        )
         
-        # 提取引号内容
-        quoted = re.findall(r'["\']([^"\']+)["\']', source_text)
+        client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
         
-        # 提取日期
-        dates = re.findall(r'\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b', source_text)
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model=LLM_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1,
+                    max_tokens=500
+                )
+                
+                content = response.choices[0].message.content.strip()
+                
+                # 提取 JSON
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0].strip()
+                
+                result = json.loads(content)
+                derivable = result.get('derivable', False)
+                reason = result.get('reason', '')
+                
+                return derivable, reason
+                
+            except json.JSONDecodeError as e:
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2)
         
-        # 合并关键信息
-        all_keywords = []
-        all_keywords.extend([(n, 'number') for n in numbers if len(n) >= 2])
-        all_keywords.extend([(n, 'proper_noun') for n in proper_nouns if len(n) >= 3])
-        all_keywords.extend([(q, 'quoted') for q in quoted if len(q) >= 3])
-        all_keywords.extend([(d, 'date') for d in dates])
-        
-        if not all_keywords:
-            return True, "No extractable keywords (assumed derivable)"
-        
-        # 检查匹配
-        matched = []
-        not_matched = []
-        
-        target_text_lower = target_text.lower()
-        
-        for keyword, kw_type in all_keywords:
-            if keyword.lower() in target_text_lower:
-                matched.append((keyword, kw_type))
-            else:
-                not_matched.append((keyword, kw_type))
-        
-        match_rate = len(matched) / len(all_keywords) if all_keywords else 0
-        derivable = match_rate >= 0.5
-        
-        info = f"Matched {len(matched)}/{len(all_keywords)} ({match_rate*100:.0f}%)"
-        if matched:
-            info += f" | Found: {[k for k, _ in matched[:5]]}"
-        if not_matched:
-            info += f" | Missing: {[k for k, _ in not_matched[:5]]}"
-        
-        return derivable, info
+        return False, "LLM call failed"
     
     def check_sample(self, sample: APIAgentSample) -> Dict[str, Any]:
         """
@@ -1057,7 +1296,7 @@ class ToolBenchDynamicChecker:
                     response_str = json.dumps(response, ensure_ascii=False) if isinstance(response, (dict, list)) else str(response)
                     all_api_responses.append({
                         'api_name': call.name,
-                        'response': response_str[:2000]
+                        'response': response_str  # 不截断，保留完整响应
                     })
                 else:
                     result['passed'] = False
@@ -1069,19 +1308,19 @@ class ToolBenchDynamicChecker:
         if result['finish_type'] != 'give_answer':
             result['passed'] = False
         
-        # 检查答案可推导性
+        # 检查答案可推导性（LLM Judge）
         if result['passed'] and sample.final_answer and all_api_responses:
             all_responses_text = "\n".join([
                 f"[{r['api_name']}]: {r['response']}" for r in all_api_responses
             ])
             
-            derivable, info = self._check_keyword_derivability(
+            derivable, reason = self._check_derivability_llm(
                 sample.final_answer, all_responses_text
             )
             
             result['derivability'] = {
                 'derivable': derivable,
-                'info': info,
+                'reason': reason,
             }
         
         return result

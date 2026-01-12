@@ -140,13 +140,13 @@ def compute_format_check(
             rate = total / elapsed if elapsed > 0 else 0
             pass_rate = passed / total if total > 0 else 0
             print(f"  [{total:,}/{max_samples or '?'}] {rate:.1f} 条/秒, 通过率: {pass_rate:.2%}")
-            # 显示当前批次的错误样本
+            # 显示当前批次的错误样本（完整输出，不省略）
             if batch_error_ids:
                 try:
                     sorted_ids = sorted(batch_error_ids, key=lambda x: int(str(x).split('_')[-1]))
                 except:
                     sorted_ids = sorted(batch_error_ids, key=str)
-                print(f"    格式错误样本: {sorted_ids[:10]}{'...' if len(sorted_ids) > 10 else ''}")
+                print(f"    格式错误样本: {sorted_ids}")
                 batch_error_ids = []
     
     elapsed = time.time() - start_time
@@ -324,13 +324,13 @@ def compute_format_check_parallel(
                     pass_rate = passed / completed if completed > 0 else 0
                     total_str = f"{max_samples:,}" if max_samples else "?"
                     print(f"  [{completed:,}/{total_str}] {rate:.1f} 条/秒, 通过率: {pass_rate:.2%}", flush=True)
-                    # 显示当前批次的错误样本（排序后输出）
+                    # 显示当前批次的错误样本（完整输出，不省略）
                     if batch_error_ids:
                         try:
                             sorted_ids = sorted(batch_error_ids, key=lambda x: int(str(x).split('_')[-1]))
                         except:
                             sorted_ids = sorted(batch_error_ids, key=str)
-                        print(f"    格式错误样本: {sorted_ids[:10]}{'...' if len(sorted_ids) > 10 else ''}", flush=True)
+                        print(f"    格式错误样本: {sorted_ids}", flush=True)
                         batch_error_ids = []
     
     # 分批读取和处理

@@ -104,6 +104,20 @@ class XLAMFormatChecker(FormatChecker):
             param_errors = self._check_param_annotation(tool.name, idx, param)
             errors.extend(param_errors)
         
+            # required 和 optional 互补性检查
+            # 同为 True 或同为 False 都是错误
+            if param.required == param.optional:
+                if param.required and param.optional:
+                    errors.append(
+                        f"Tool {idx} ({tool.name}) param '{param.name}': "
+                        f"INVALID STATE - both required and optional are True"
+                    )
+                else:
+                    errors.append(
+                        f"Tool {idx} ({tool.name}) param '{param.name}': "
+                        f"INVALID STATE - both required and optional are False"
+                    )
+        
         return errors, warnings
     
     def _check_param_annotation(self, tool_name: str, tool_idx: int, param: Parameter) -> List[str]:

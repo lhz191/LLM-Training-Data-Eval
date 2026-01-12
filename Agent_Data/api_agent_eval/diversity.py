@@ -22,6 +22,13 @@ Diversity 多样性指标
     )
 """
 
+# 在任何 import 之前设置线程限制，防止 OpenBLAS 崩溃
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '32'
+os.environ['OMP_NUM_THREADS'] = '32'
+os.environ['MKL_NUM_THREADS'] = '32'
+os.environ['NUMEXPR_NUM_THREADS'] = '32'
+
 import os
 import json
 import time
@@ -637,17 +644,16 @@ def compute_knn_diversity(
         k = n - 1
         print(f"K 调整为 {k}")
     
-    # 构建 KNN 模型
-    print("构建 KNN 模型...")
+    # sklearn 单线程版本（避免 OpenBLAS 多线程问题）
+    print("构建 KNN 模型（单线程）...")
     nn = NearestNeighbors(
         n_neighbors=k + 1,  # +1 因为包含自己
         metric=distance_metric,
         algorithm='auto',
-        n_jobs=-1,
+        n_jobs=1,  # 单线程，避免 OpenBLAS 崩溃
     )
     nn.fit(embeddings)
     
-    # 查询所有样本的 K 近邻
     print("查询 K 近邻...")
     distances, indices = nn.kneighbors(embeddings)
     
@@ -658,9 +664,6 @@ def compute_knn_diversity(
     mean_distance = float(np.mean(k_distances))
     std_distance = float(np.std(k_distances))
     median_distance = float(np.median(k_distances))
-    
-    # 每个样本的平均 K 近邻距离
-    per_sample_mean = np.mean(k_distances, axis=1)
     
     print(f"KNN 平均距离: {mean_distance:.6f}")
     print(f"KNN 距离标准差: {std_distance:.6f}")

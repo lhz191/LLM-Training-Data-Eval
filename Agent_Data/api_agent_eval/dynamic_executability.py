@@ -131,6 +131,7 @@ def compute_dynamic_executability(
         'success_apis': Counter(),
         'errors': [],
         'sample_results': [],
+        'llm_judge_results': [],  # LLM Judge 详细结果
     }
     
     completed = 0
@@ -197,6 +198,13 @@ def compute_dynamic_executability(
                     results_data['derivability']['derivable'] += 1
                 else:
                     results_data['derivability']['not_derivable'] += 1
+                # 记录 LLM Judge 详细结果
+                results_data['llm_judge_results'].append({
+                    'sample_id': sample_result.get('sample_id', 'unknown'),
+                    'type': 'train_derivability',
+                    'result': deriv.get('derivable'),
+                    'reason': deriv.get('reason', ''),
+                })
             
             # 进度
             if progress_interval and completed % progress_interval == 0:
@@ -247,6 +255,9 @@ def compute_dynamic_executability(
         # 失败的 API 统计
         'failed_apis': dict(results_data['failed_apis'].most_common(50)),
         'success_apis': dict(results_data['success_apis'].most_common(50)),
+        
+        # LLM Judge 详细结果（包含每个样本的判断理由）
+        'llm_judge_results': results_data['llm_judge_results'],
         
         # 错误列表（完整保存）
         'errors': results_data['errors'],

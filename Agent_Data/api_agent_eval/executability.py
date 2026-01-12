@@ -37,22 +37,118 @@ from api_executor import ExecutabilityChecker
 
 
 # =============================================================================
+# 辅助函数
+# =============================================================================
+
+def _compute_error_type_distribution(error_samples: List[Dict], total: int) -> Dict[str, Any]:
+    """
+    计算错误类型分布统计
+    
+    将错误分为两大类：
+    1. API 错误：toolenv 找不到 API、必需参数缺失等
+    2. LLM Judge 错误：Train Derivability、Query-Answer Relevance
+    
+    Args:
+        error_samples: 错误样本列表
+        total: 总样本数
+    
+    Returns:
+        错误类型分布统计字典
+    """
+    api_only_errors = 0  # 只有 API 相关错误
+    llm_only_errors = 0  # 只有 LLM Judge 错误
+    both_errors = 0      # 两者都有
+    api_error_ids = set()
+    llm_error_ids = set()
+    
+    for sample in error_samples:
+        sample_id = sample['sample_id']
+        errors = sample['errors']
+        
+        has_api_error = False
+        has_llm_error = False
+        
+        for err in errors:
+            if 'Train Derivability' in err or 'Query-Answer Relevance' in err:
+                has_llm_error = True
+            else:
+                has_api_error = True
+        
+        if has_api_error:
+            api_error_ids.add(sample_id)
+        if has_llm_error:
+            llm_error_ids.add(sample_id)
+        
+        if has_api_error and has_llm_error:
+            both_errors += 1
+        elif has_api_error:
+            api_only_errors += 1
+        elif has_llm_error:
+            llm_only_errors += 1
+    
+    # 纯静态可执行性（只看 API 错误）
+    api_error_count = len(api_error_ids)
+    pure_static_passed = total - api_error_count
+    
+    return {
+        'api_only_errors': api_only_errors,
+        'llm_only_errors': llm_only_errors,
+        'both_errors': both_errors,
+        'api_error_samples': api_error_count,
+        'llm_error_samples': len(llm_error_ids),
+        'pure_static_executability': {
+            'passed': pure_static_passed,
+            'failed': api_error_count,
+            'pass_rate': pure_static_passed / total if total > 0 else 0,
+        }
+    }
+
+
+# =============================================================================
 # 并行处理辅助函数
 # =============================================================================
 
-def _check_single_sample_executability(args) -> Dict[str, Any]:
+# 全局变量，用于在 worker 进程中缓存 checker 实例
+_worker_checker = None
+_worker_checker_class = None
+_worker_checker_kwargs = None
+
+
+def _init_worker(checker_class, checker_kwargs):
+    """
+    Worker 进程初始化函数
+    在每个 worker 启动时只调用一次，创建并缓存 checker 实例
+    """
+    global _worker_checker, _worker_checker_class, _worker_checker_kwargs
+    _worker_checker_class = checker_class
+    _worker_checker_kwargs = checker_kwargs
+    _worker_checker = checker_class(**checker_kwargs)
+    # 预先构建 API 映射（如果是 ToolBench）
+    if hasattr(_worker_checker, '_build_api_mapping'):
+        _worker_checker._build_api_mapping()
+
+
+def _check_single_sample_executability(sample) -> Dict[str, Any]:
     """
     检查单个样本的可执行性（用于并行处理）
     
+    使用 worker 进程中缓存的 checker 实例，避免重复初始化
+    
     Args:
-        args: (sample, checker_class, checker_kwargs) 元组
+        sample: APIAgentSample 对象
     
     Returns:
         检查结果字典
     """
-    sample, checker_class, checker_kwargs = args
-    checker = checker_class(**checker_kwargs)
-    errors, warnings, stats = checker.check(sample)
+    global _worker_checker
+    
+    # 如果 checker 还没初始化（理论上不应该发生）
+    if _worker_checker is None:
+        _worker_checker = _worker_checker_class(**_worker_checker_kwargs)
+        if hasattr(_worker_checker, '_build_api_mapping'):
+            _worker_checker._build_api_mapping()
+    
+    errors, warnings, stats = _worker_checker.check(sample)
     
     return {
         'sample_id': sample.sample_id,
@@ -104,13 +200,20 @@ def compute_executability(
     # API 调用统计
     total_api_calls = 0
     
-    # 可推导性统计（ToolBench）
+    # 可推导性统计（LLM Judge）
     derivability_total = 0
     derivability_passed = 0
+    
+    # 查询相关性统计（LLM Judge）
+    relevance_total = 0
+    relevance_passed = 0
     
     # 详细结果
     error_samples = []
     warning_samples = []
+    
+    # LLM Judge 详细结果
+    llm_judge_results = []
     
     # 当前批次的错误样本
     batch_error_ids = []
@@ -127,11 +230,31 @@ def compute_executability(
         # 统计 API 调用
         total_api_calls += stats.get('api_calls_checked', 0)
         
-        # 统计可推导性
+        # 统计可推导性（Train Derivability）
         if stats.get('train_derivability'):
             derivability_total += 1
             if stats['train_derivability'].get('derivable'):
                 derivability_passed += 1
+            # 记录 LLM Judge 结果
+            llm_judge_results.append({
+                'sample_id': sample.sample_id,
+                'type': 'train_derivability',
+                'result': stats['train_derivability'].get('derivable'),
+                'reason': stats['train_derivability'].get('reason', ''),
+            })
+        
+        # 统计查询相关性（Query-Answer Relevance）
+        if stats.get('query_relevance'):
+            relevance_total += 1
+            if stats['query_relevance'].get('relevant'):
+                relevance_passed += 1
+            # 记录 LLM Judge 结果
+            llm_judge_results.append({
+                'sample_id': sample.sample_id,
+                'type': 'query_relevance',
+                'result': stats['query_relevance'].get('relevant'),
+                'reason': stats['query_relevance'].get('reason', ''),
+            })
         
         if errors:
             with_errors += 1
@@ -164,7 +287,7 @@ def compute_executability(
                     sorted_ids = sorted(batch_error_ids, key=lambda x: int(str(x).split('_')[-1]))
                 except:
                     sorted_ids = sorted(batch_error_ids, key=str)
-                print(f"    可执行性错误: {sorted_ids[:10]}{'...' if len(sorted_ids) > 10 else ''}")
+                print(f"    可执行性错误: {sorted_ids}")
                 batch_error_ids = []
     
     elapsed = time.time() - start_time
@@ -174,6 +297,7 @@ def compute_executability(
     error_rate = with_errors / total if total > 0 else 0
     warning_rate = with_warnings / total if total > 0 else 0
     derivability_rate = derivability_passed / derivability_total if derivability_total > 0 else 0
+    relevance_rate = relevance_passed / relevance_total if relevance_total > 0 else 0
     
     # 结果
     results = {
@@ -196,12 +320,25 @@ def compute_executability(
         'total_api_calls': total_api_calls,
         'avg_api_calls_per_sample': total_api_calls / total if total > 0 else 0,
         
-        # 可推导性统计
+        # LLM Judge 统计 - 可推导性（Train Derivability）
         'derivability': {
             'total': derivability_total,
             'passed': derivability_passed,
             'rate': derivability_rate,
         },
+        
+        # LLM Judge 统计 - 查询相关性（Query-Answer Relevance）
+        'relevance': {
+            'total': relevance_total,
+            'passed': relevance_passed,
+            'rate': relevance_rate,
+        },
+        
+        # LLM Judge 详细结果（包含每个样本的判断理由）
+        'llm_judge_results': llm_judge_results,
+        
+        # 错误类型分布统计
+        'error_type_distribution': _compute_error_type_distribution(error_samples, total),
         
         # 详细样本（完整保存）
         'error_samples': error_samples,
@@ -219,7 +356,8 @@ def compute_executability(
         print(f"\n结果已保存到: {output_file}")
     
     # 打印摘要
-    _print_summary(results, elapsed, error_samples, derivability_total, derivability_passed, derivability_rate, total_api_calls, total)
+    _print_summary(results, elapsed, error_samples, derivability_total, derivability_passed, derivability_rate, 
+                   relevance_total, relevance_passed, relevance_rate, total_api_calls, total)
     
     return results
 
@@ -233,7 +371,6 @@ def compute_executability_parallel(
     max_samples: Optional[int] = None,
     progress_interval: int = 10000,
     max_workers: Optional[int] = None,
-    batch_size: int = 10000,
 ) -> Dict[str, Any]:
     """
     计算 Executability 指标（并行版本）
@@ -247,7 +384,6 @@ def compute_executability_parallel(
         max_samples: 最大样本数（用于测试）
         progress_interval: 进度显示间隔
         max_workers: 最大并行数（默认为 CPU 核心数）
-        batch_size: 每批处理的样本数
     
     Returns:
         结果字典
@@ -263,7 +399,6 @@ def compute_executability_parallel(
     print("=" * 70)
     print(f"数据集: {dataset_name}")
     print(f"并行进程: {max_workers}")
-    print(f"批大小: {batch_size:,}")
     print(f"开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(flush=True)
     
@@ -277,97 +412,113 @@ def compute_executability_parallel(
     total_api_calls = 0
     derivability_total = 0
     derivability_passed = 0
+    relevance_total = 0
+    relevance_passed = 0
     
     # 详细结果
     error_samples = []
     warning_samples = []
     
+    # LLM Judge 详细结果
+    llm_judge_results = []
+    
     # 当前批次的错误样本
     batch_error_ids = []
     
-    # 分批处理
-    def process_batch(batch_samples):
-        nonlocal completed, passed, with_errors, with_warnings, batch_error_ids
-        nonlocal total_api_calls, derivability_total, derivability_passed
-        
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    _check_single_sample_executability, 
-                    (sample, executability_checker_class, checker_kwargs)
-                ): sample.sample_id
-                for sample in batch_samples
-            }
-            
-            for future in as_completed(futures):
-                completed += 1
-                result = future.result()
-                
-                # 统计 API 调用
-                stats = result.get('stats', {})
-                total_api_calls += stats.get('api_calls_checked', 0)
-                
-                # 统计可推导性
-                if stats.get('train_derivability'):
-                    derivability_total += 1
-                    if stats['train_derivability'].get('derivable'):
-                        derivability_passed += 1
-                
-                if result['has_errors']:
-                    with_errors += 1
-                    batch_error_ids.append(result['sample_id'])
-                    error_samples.append({
-                        'sample_id': result['sample_id'],
-                        'errors': result['errors'],
-                        'warnings': result['warnings'],
-                        'stats': result['stats'],
-                    })
-                elif result['has_warnings']:
-                    with_warnings += 1
-                    passed += 1
-                    warning_samples.append({
-                        'sample_id': result['sample_id'],
-                        'warnings': result['warnings'],
-                        'stats': result['stats'],
-                    })
-                else:
-                    passed += 1
-                
-                # 进度
-                if progress_interval and completed % progress_interval == 0:
-                    elapsed = time.time() - start_time
-                    rate = completed / elapsed if elapsed > 0 else 0
-                    pass_rate = passed / completed if completed > 0 else 0
-                    total_str = f"{max_samples:,}" if max_samples else "?"
-                    print(f"  [{completed:,}/{total_str}] {rate:.1f} 条/秒, 通过率: {pass_rate:.2%}", flush=True)
-                    if batch_error_ids:
-                        try:
-                            sorted_ids = sorted(batch_error_ids, key=lambda x: int(str(x).split('_')[-1]))
-                        except:
-                            sorted_ids = sorted(batch_error_ids, key=str)
-                        print(f"    可执行性错误: {sorted_ids[:10]}{'...' if len(sorted_ids) > 10 else ''}", flush=True)
-                        batch_error_ids = []
-    
-    # 分批读取和处理
-    current_batch = []
-    total_loaded = 0
-    
-    print("开始处理...", flush=True)
-    
+    # 先收集所有样本（避免迭代器与进程池冲突）
+    print("Step 1: 收集样本...", flush=True)
+    all_samples = []
     for sample in data_iterator:
-        if max_samples and total_loaded >= max_samples:
+        if max_samples and len(all_samples) >= max_samples:
             break
-        
-        current_batch.append(sample)
-        total_loaded += 1
-        
-        if len(current_batch) >= batch_size:
-            process_batch(current_batch)
-            current_batch = []
+        all_samples.append(sample)
     
-    # 处理剩余的样本
-    if current_batch:
-        process_batch(current_batch)
+    total_to_process = len(all_samples)
+    print(f"共 {total_to_process:,} 个样本待处理", flush=True)
+    print()
+    
+    # Step 2: 创建一次进程池，处理所有样本
+    print("Step 2: 并行检查...", flush=True)
+    
+    with ProcessPoolExecutor(
+        max_workers=max_workers,
+        initializer=_init_worker,
+        initargs=(executability_checker_class, checker_kwargs)
+    ) as executor:
+        # 提交所有任务
+        futures = {
+            executor.submit(_check_single_sample_executability, sample): sample.sample_id
+            for sample in all_samples
+        }
+        
+        # 处理结果
+        for future in as_completed(futures):
+            completed += 1
+            result = future.result()
+            
+            # 统计 API 调用
+            stats = result.get('stats', {})
+            total_api_calls += stats.get('api_calls_checked', 0)
+            
+            # 统计可推导性（Train Derivability）
+            if stats.get('train_derivability'):
+                derivability_total += 1
+                if stats['train_derivability'].get('derivable'):
+                    derivability_passed += 1
+                # 记录 LLM Judge 结果
+                llm_judge_results.append({
+                    'sample_id': result['sample_id'],
+                    'type': 'train_derivability',
+                    'result': stats['train_derivability'].get('derivable'),
+                    'reason': stats['train_derivability'].get('reason', ''),
+                })
+            
+            # 统计查询相关性（Query-Answer Relevance）
+            if stats.get('query_relevance'):
+                relevance_total += 1
+                if stats['query_relevance'].get('relevant'):
+                    relevance_passed += 1
+                # 记录 LLM Judge 结果
+                llm_judge_results.append({
+                    'sample_id': result['sample_id'],
+                    'type': 'query_relevance',
+                    'result': stats['query_relevance'].get('relevant'),
+                    'reason': stats['query_relevance'].get('reason', ''),
+                })
+            
+            if result['has_errors']:
+                with_errors += 1
+                batch_error_ids.append(result['sample_id'])
+                error_samples.append({
+                    'sample_id': result['sample_id'],
+                    'errors': result['errors'],
+                    'warnings': result['warnings'],
+                    'stats': result['stats'],
+                })
+            elif result['has_warnings']:
+                with_warnings += 1
+                passed += 1
+                warning_samples.append({
+                    'sample_id': result['sample_id'],
+                    'warnings': result['warnings'],
+                    'stats': result['stats'],
+                })
+            else:
+                passed += 1
+            
+            # 进度
+            if progress_interval and completed % progress_interval == 0:
+                elapsed = time.time() - start_time
+                rate = completed / elapsed if elapsed > 0 else 0
+                pass_rate = passed / completed if completed > 0 else 0
+                print(f"  [{completed:,}/{total_to_process:,}] {rate:.1f} 条/秒, 通过率: {pass_rate:.2%}", flush=True)
+                if batch_error_ids:
+                    try:
+                        sorted_ids = sorted(batch_error_ids, key=lambda x: int(str(x).split('_')[-1]))
+                    except:
+                        sorted_ids = sorted(batch_error_ids, key=str)
+                    print(f"    可执行性错误: {sorted_ids}", flush=True)
+                    batch_error_ids = []
     
     elapsed = time.time() - start_time
     total = completed
@@ -377,6 +528,7 @@ def compute_executability_parallel(
     error_rate = with_errors / total if total > 0 else 0
     warning_rate = with_warnings / total if total > 0 else 0
     derivability_rate = derivability_passed / derivability_total if derivability_total > 0 else 0
+    relevance_rate = relevance_passed / relevance_total if relevance_total > 0 else 0
     
     # 结果
     results = {
@@ -400,12 +552,25 @@ def compute_executability_parallel(
         'total_api_calls': total_api_calls,
         'avg_api_calls_per_sample': total_api_calls / total if total > 0 else 0,
         
-        # 可推导性统计
+        # LLM Judge 统计 - 可推导性（Train Derivability）
         'derivability': {
             'total': derivability_total,
             'passed': derivability_passed,
             'rate': derivability_rate,
         },
+        
+        # LLM Judge 统计 - 查询相关性（Query-Answer Relevance）
+        'relevance': {
+            'total': relevance_total,
+            'passed': relevance_passed,
+            'rate': relevance_rate,
+        },
+        
+        # LLM Judge 详细结果（包含每个样本的判断理由）
+        'llm_judge_results': llm_judge_results,
+        
+        # 错误类型分布统计
+        'error_type_distribution': _compute_error_type_distribution(error_samples, total),
         
         # 详细样本（完整保存）
         'error_samples': error_samples,
@@ -423,12 +588,14 @@ def compute_executability_parallel(
         print(f"\n结果已保存到: {output_file}")
     
     # 打印摘要
-    _print_summary(results, elapsed, error_samples, derivability_total, derivability_passed, derivability_rate, total_api_calls, total)
+    _print_summary(results, elapsed, error_samples, derivability_total, derivability_passed, derivability_rate, 
+                   relevance_total, relevance_passed, relevance_rate, total_api_calls, total)
     
     return results
 
 
-def _print_summary(results, elapsed, error_samples, derivability_total, derivability_passed, derivability_rate, total_api_calls, total):
+def _print_summary(results, elapsed, error_samples, derivability_total, derivability_passed, derivability_rate,
+                   relevance_total, relevance_passed, relevance_rate, total_api_calls, total):
     """打印评估摘要"""
     print()
     print("=" * 70)
@@ -445,10 +612,31 @@ def _print_summary(results, elapsed, error_samples, derivability_total, derivabi
     print(f"  平均每样本 API 调用: {total_api_calls / total if total > 0 else 0:.2f}")
     print()
     
-    if derivability_total > 0:
-        print(f"【可推导性统计】")
-        print(f"  检查样本数: {derivability_total:,}")
-        print(f"  可推导: {derivability_passed:,} ({derivability_rate:.2%})")
+    # LLM Judge 统计
+    if derivability_total > 0 or relevance_total > 0:
+        print(f"【LLM Judge 统计】")
+        if derivability_total > 0:
+            print(f"  可推导性 (Train Derivability):")
+            print(f"    检查样本数: {derivability_total:,}")
+            print(f"    通过: {derivability_passed:,} ({derivability_rate:.2%})")
+        if relevance_total > 0:
+            print(f"  查询相关性 (Query-Answer Relevance):")
+            print(f"    检查样本数: {relevance_total:,}")
+            print(f"    通过: {relevance_passed:,} ({relevance_rate:.2%})")
+        print()
+    
+    # 显示错误类型分布
+    if 'error_type_distribution' in results:
+        dist = results['error_type_distribution']
+        print("【错误类型分布】")
+        print(f"  只有 API 错误（toolenv/参数）: {dist['api_only_errors']:,}")
+        print(f"  只有 LLM Judge 错误: {dist['llm_only_errors']:,}")
+        print(f"  两者都有: {dist['both_errors']:,}")
+        print()
+        print(f"  纯静态可执行性（不含 LLM Judge）:")
+        pure = dist['pure_static_executability']
+        print(f"    通过: {pure['passed']:,} ({pure['pass_rate']:.2%})")
+        print(f"    失败: {pure['failed']:,} ({1 - pure['pass_rate']:.2%})")
         print()
     
     # 显示错误类型统计

@@ -52,8 +52,13 @@ class Parameter:
     可选字段：
     - description: 参数描述
     - default: 默认值
-    - optional: 是否可选参数
+    - required: 是否必需参数
+    - optional: 是否可选参数（与 required 互补，required=True 则 optional=False）
     - metadata: 其他元信息（如 ToolBench 的 example_value）
+    
+    注意：required 和 optional 是互补的，一个参数要么是必需的，要么是可选的。
+    - ToolBench: 在 required 列表中 → required=True；在 optional 列表中或都没出现 → optional=True
+    - xLAM: type 中带 'optional' → optional=True；否则 → required=True
     """
     # === 必需字段 ===
     name: str                           # 参数名
@@ -62,7 +67,8 @@ class Parameter:
     # === 可选字段 ===
     description: str = ""               # 参数描述
     default: Any = None                 # 默认值
-    optional: bool = False              # 是否可选参数
+    required: bool = True               # 是否必需参数
+    optional: bool = False              # 是否可选参数（与 required 互补）
     metadata: Dict[str, Any] = field(default_factory=dict)  # 其他元信息（如 example_value）
 
 
@@ -84,7 +90,7 @@ class ToolDefinition:
     
     def get_required_params(self) -> List[str]:
         """获取必需参数名列表"""
-        return [p.name for p in self.parameters if not p.optional]
+        return [p.name for p in self.parameters if p.required]
     
     def get_optional_params(self) -> List[str]:
         """获取可选参数名列表"""

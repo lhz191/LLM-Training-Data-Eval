@@ -13,10 +13,18 @@ API Agent 数据集评估
 - Dynamic Executability: 动态可执行性检查（需要 RapidAPI Key）
 - Diversity: 多样性评估 (Vendi Score / KNN)
 """
+
+# ============================================================================
+# 必须在任何 import 之前设置，防止 OpenBLAS/MKL 线程过多导致崩溃
+# ============================================================================
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '32'
+os.environ['OMP_NUM_THREADS'] = '32'
+os.environ['MKL_NUM_THREADS'] = '32'
+os.environ['NUMEXPR_NUM_THREADS'] = '32'
+
 import sys
 sys.set_int_max_str_digits(0)
-
-import os
 import argparse
 import itertools
 from datetime import datetime
@@ -255,9 +263,15 @@ def run_dynamic_executability(dataset_key: str, max_samples: int = None, workers
     from toolbench_executor import ToolBenchDynamicChecker
     
     loader = ToolBenchLoader(config['data_path'])
+    
+    # 使用缓存目录加速 API 映射加载
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    cache_dir = os.path.join(script_dir, 'cache')
+    
     checker = ToolBenchDynamicChecker(
         rapidapi_key=rapidapi_key,
         toolenv_path=config['toolenv_path'],
+        cache_dir=cache_dir,
         timeout=timeout,
     )
     

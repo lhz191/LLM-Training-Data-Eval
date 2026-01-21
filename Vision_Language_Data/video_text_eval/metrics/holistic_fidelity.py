@@ -17,11 +17,8 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_types import VideoTextSample
 
-# VBench 路径（需要根据实际情况调整）
-VBENCH_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    '../../LLMDataBenchmark/Multimodal/metrics'
-)
+# VBench 路径（在 metrics/ 目录下）
+VBENCH_PATH = os.path.dirname(os.path.abspath(__file__))
 
 
 def compute_holistic_fidelity(
@@ -61,7 +58,7 @@ def compute_holistic_fidelity(
     
     # 设置 VBench JSON 路径
     if full_json_dir is None:
-        full_json_dir = os.path.join(VBENCH_PATH, 'vbench', 'VBench_full_info.json')
+        full_json_dir = os.path.join(VBENCH_PATH, 'vbench/VBench_full_info.json')
     
     # 收集样本，转换为 VBench 需要的格式
     samples = list(data_iterator)

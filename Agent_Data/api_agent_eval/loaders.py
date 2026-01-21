@@ -25,10 +25,29 @@ from data_types import (
 
 
 # =============================================================================
+# Base Loader
+# =============================================================================
+
+class BaseLoader:
+    """数据集加载器基类"""
+    
+    def __init__(self, data_path: str):
+        self.data_path = data_path
+    
+    def load(self) -> List[APIAgentSample]:
+        """加载数据集，返回 APIAgentSample 列表"""
+        return list(self.iterate())
+    
+    def iterate(self) -> Iterator[APIAgentSample]:
+        """迭代返回 APIAgentSample，子类需实现"""
+        raise NotImplementedError
+
+
+# =============================================================================
 # ToolBench Loader
 # =============================================================================
 
-class ToolBenchLoader:
+class ToolBenchLoader(BaseLoader):
     """
     ToolBench 数据集加载器
     
@@ -512,7 +531,7 @@ class ToolBenchLoader:
 # xLAM Loader
 # =============================================================================
 
-class XLAMLoader:
+class XLAMLoader(BaseLoader):
     """
     xLAM-60k 数据集加载器
     

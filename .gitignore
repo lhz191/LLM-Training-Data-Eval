@@ -90,7 +90,11 @@ cursor_*.md
 agent.md
 OpenDataArena-Tool/
 Skills/
-Vision_Language_Data/
+
+# Vision_Language_Data - 忽略大部分，但保留 video_text_eval
+Vision_Language_Data/*
+!Vision_Language_Data/video_text_eval/
+!Vision_Language_Data/video_text_eval/models/
 
 Agent_Data/api_agent_eval/cache/*
 !Agent_Data/api_agent_eval/cache/.gitkeep

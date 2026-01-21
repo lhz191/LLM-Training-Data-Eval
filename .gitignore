@@ -91,10 +91,10 @@ agent.md
 OpenDataArena-Tool/
 Skills/
 
-# Vision_Language_Data - 忽略大部分，但保留 video_text_eval
+# Vision_Language_Data - 忽略大部分，但保留 video_text_eval 和 image_text_eval
 Vision_Language_Data/*
 !Vision_Language_Data/video_text_eval/
-!Vision_Language_Data/video_text_eval/models/
+!Vision_Language_Data/image_text_eval/
 
 Agent_Data/api_agent_eval/cache/*
 !Agent_Data/api_agent_eval/cache/.gitkeep

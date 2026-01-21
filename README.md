@@ -16,10 +16,14 @@
 
 ## 📖 Overview
 
-This framework provides systematic evaluation metrics for LLM training data across three domains:
-- **Mathematical Reasoning** - Evaluating math problem-solving data quality
-- **API Agent** - Evaluating tool-calling and API interaction data quality
-- **Vision-Language** - Evaluating multimodal (image-text, video-text) data quality
+This framework provides systematic evaluation metrics for LLM training data quality across multiple data modalities:
+
+- **Symbolic & Logical Data** - Mathematical reasoning, code, formal logic
+- **Agent Data** - Tool-calling, API interaction, web navigation
+- **Vision-Language Data** - Image-text, video-text multimodal data
+- **Text Data** - Pure text corpora *(coming soon)*
+- **Tabular Data** - Structured table data *(coming soon)*
+- **Semi-Structured & Graph Data** - Knowledge graphs, semi-structured data *(coming soon)*
 
 ## 📁 Project Structure
 
@@ -32,61 +36,46 @@ This framework provides systematic evaluation metrics for LLM training data acro
 │       ├── lila_executor.py           # LILA dataset executor
 │       ├── openmath_executor.py       # OpenMath dataset executor
 │       ├── metrics/                   # Evaluation metrics
-│       │   ├── format_check.py        # Format validation
-│       │   ├── validity.py            # Code validity check
-│       │   ├── reasoning_validity.py  # Reasoning validity check
-│       │   ├── faithfulness.py        # Answer faithfulness check
-│       │   └── diversity.py           # Diversity metrics
 │       ├── scripts/
 │       │   └── run_full_test.py       # Unified entry point
 │       └── results/                   # Evaluation outputs
 │
-├── Agent_Data/                        # API Agent Data
+├── Agent_Data/                        # Agent Data
 │   └── api_agent_eval/
 │       ├── data_types.py              # Data type definitions
-│       ├── loaders.py                 # Data loaders (ToolBench, xLAM)
+│       ├── loaders.py                 # Data loaders
 │       ├── api_executor.py            # Executor base class
 │       ├── toolbench_executor.py      # ToolBench executor
 │       ├── xlam_executor.py           # xLAM executor
 │       ├── metrics/                   # Evaluation metrics
-│       │   ├── format_check.py        # Format validation
-│       │   ├── executability.py       # Static executability check
-│       │   ├── dynamic_executability.py  # Dynamic API call check
-│       │   └── diversity.py           # Diversity metrics
 │       ├── scripts/
 │       │   └── run_full_test.py       # Unified entry point
 │       └── results/                   # Evaluation outputs
 │
-└── Vision_Language_Data/              # Vision-Language Data
-    ├── video_text_eval/               # Video-Text Evaluation
-    │   ├── data_types.py              # VideoTextSample definition
-    │   ├── loaders.py                 # Data loaders
-    │   ├── metrics/                   # Evaluation metrics
-    │   │   ├── frame_diversity.py     # Frame diversity (optical flow)
-    │   │   ├── semantic_diversity.py  # Semantic diversity (Inception V3)
-    │   │   ├── object_consistency.py  # Object consistency (CLIP)
-    │   │   ├── cross_modal_consistency.py  # Cross-modal consistency (ViCLIP)
-    │   │   ├── safety_bench.py        # Safety evaluation (GPT-4 Vision)
-    │   │   ├── holistic_fidelity.py   # Holistic fidelity (VBench)
-    │   │   ├── internvid/             # ViCLIP model
-    │   │   └── vbench/                # VBench framework
-    │   ├── scripts/
-    │   │   └── run_full_test.py       # Unified entry point
-    │   └── results/                   # Evaluation outputs
-    │
-    └── image_text_eval/               # Image-Text Evaluation
-        ├── data_types.py              # ImageTextSample definition
-        ├── loaders.py                 # Data loaders
-        ├── image_executor.py          # Format checker base class
-        ├── coco_executor.py           # COCO format checker
-        ├── metrics/                   # Evaluation metrics
-        │   ├── inception_score.py     # Inception Score
-        │   ├── prompt_fidelity.py     # Prompt fidelity (CLIP)
-        │   ├── well_formed_rate.py    # Well-formed rate
-        │   └── c2pa_validation.py     # C2PA validation
-        ├── scripts/
-        │   └── run_full_test.py       # Unified entry point
-        └── results/                   # Evaluation outputs
+├── Vision_Language_Data/              # Vision-Language Data
+│   ├── video_text_eval/               # Video-Text Evaluation
+│   │   ├── data_types.py              # VideoTextSample definition
+│   │   ├── loaders.py                 # Data loaders
+│   │   ├── metrics/                   # Evaluation metrics
+│   │   ├── scripts/
+│   │   │   └── run_full_test.py       # Unified entry point
+│   │   └── results/                   # Evaluation outputs
+│   │
+│   └── image_text_eval/               # Image-Text Evaluation
+│       ├── data_types.py              # ImageTextSample definition
+│       ├── loaders.py                 # Data loaders
+│       ├── image_executor.py          # Format checker base class
+│       ├── coco_executor.py           # COCO format checker
+│       ├── metrics/                   # Evaluation metrics
+│       ├── scripts/
+│       │   └── run_full_test.py       # Unified entry point
+│       └── results/                   # Evaluation outputs
+│
+├── Text_Data/                         # Text Data (coming soon)
+│
+├── Tabular_Data/                      # Tabular Data (coming soon)
+│
+└── Semi_Structured_Graph_Data/        # Semi-Structured & Graph Data (coming soon)
 ```
 
 ## 📊 Supported Datasets

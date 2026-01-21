@@ -30,8 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import Iterator, List
 from data_types import VideoTextSample
-from models.viclip import ViCLIP
-from models.simple_tokenizer import SimpleTokenizer as _Tokenizer
+from .internvid.viclip import ViCLIP
+from .internvid.simple_tokenizer import SimpleTokenizer as _Tokenizer
 
 
 class ViCLIP_dataset(Dataset):

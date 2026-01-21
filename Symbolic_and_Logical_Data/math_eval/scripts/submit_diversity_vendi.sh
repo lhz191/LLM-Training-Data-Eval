@@ -25,7 +25,7 @@ echo ""
 
 echo ">>> 运行 Vendi Score 评估 (all-mpnet-base-v2)..."
 # all-mpnet-base-v2: 768 维，需要更多显存，使用多 GPU 并行
-python3 -u run_full_test.py --metric diversity --dataset openmathinstruct --diversity-method vendi --embedding-model all-mpnet-base-v2 --vendi-batch-size 6500 --num-gpus 8
+python3 -u scripts/run_full_test.py --metric diversity --dataset openmathinstruct --diversity-method vendi --embedding-model all-mpnet-base-v2 --vendi-batch-size 6500 --num-gpus 8
 echo ""
 
 echo "=========================================="

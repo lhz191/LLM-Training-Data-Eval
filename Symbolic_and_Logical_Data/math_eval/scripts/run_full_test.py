@@ -18,15 +18,18 @@ import sys
 sys.set_int_max_str_digits(0)
 
 import os
+# 添加父目录到 sys.path，以便导入上级模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import argparse
 import itertools
 from datetime import datetime
 
-from validity import compute_validity, compute_validity_parallel
-from faithfulness import compute_faithfulness
-from reasoning_validity import compute_reasoning_validity, compute_reasoning_validity_parallel
-from format_check import compute_format_check, compute_format_check_parallel
-from diversity import compute_diversity
+from metrics.validity import compute_validity, compute_validity_parallel
+from metrics.faithfulness import compute_faithfulness
+from metrics.reasoning_validity import compute_reasoning_validity, compute_reasoning_validity_parallel
+from metrics.format_check import compute_format_check, compute_format_check_parallel
+from metrics.diversity import compute_diversity
 from code_executor import get_comparator
 from openmath_executor import (
     OpenMathCodeExtractor, OpenMathExecutor, OpenMathExecutorFast, 

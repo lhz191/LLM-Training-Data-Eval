@@ -29,7 +29,7 @@ echo ""
 # --max-samples 1000: 采样 1000 个样本
 # --workers 16: 16 个并行线程
 # --timeout 180: API 调用超时 180 秒（3分钟）
-python3 -u run_full_test.py --dataset toolbench --metric dynamic_executability --max-samples 1000 --workers 16 --timeout 180
+python3 -u scripts/run_full_test.py --dataset toolbench --metric dynamic_executability --max-samples 1000 --workers 16 --timeout 180
 
 echo ""
 echo "=========================================="

@@ -25,7 +25,7 @@ echo ""
 # 使用 run_full_test.py 运行
 # 默认 toolbench，如需 xlam 改 --dataset xlam 和 output log 路径
 # 并行模式：32 个进程并发调用 LLM Judge
-python3 -u run_full_test.py --dataset toolbench --metric executability --parallel --workers 32
+python3 -u scripts/run_full_test.py --dataset toolbench --metric executability --parallel --workers 32
 
 echo ""
 echo "=========================================="

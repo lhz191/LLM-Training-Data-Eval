@@ -29,7 +29,7 @@ echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || ec
 echo ""
 
 echo ">>> 运行 Diversity KNN 评估..."
-python3 -u run_full_test.py --metric diversity --dataset xlam --diversity-method knn --embedding-model Qwen/Qwen3-Embedding-8B --embedding-batch-size 4
+python3 -u scripts/run_full_test.py --metric diversity --dataset xlam --diversity-method knn --embedding-model Qwen/Qwen3-Embedding-8B --embedding-batch-size 4
 
 echo ""
 echo "=========================================="

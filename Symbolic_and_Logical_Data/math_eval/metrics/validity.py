@@ -58,6 +58,9 @@ from typing import Optional, Dict, List, Any, Iterator, Tuple
 from multiprocessing import Pool, cpu_count
 from functools import partial
 
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from data_types import MathSample
 from code_executor import (
     CodeExtractor, CodeExecutor, AnswerExtractor,

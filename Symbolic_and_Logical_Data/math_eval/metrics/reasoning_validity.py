@@ -37,6 +37,10 @@ from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from openai import OpenAI
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from data_types import MathSample
 from code_executor import CodeExtractor, AnswerExtractor, ResultComparator, compare_math_answers
 from openmath_executor import BoxedAnswerExtractor, DirectAnswerExtractor

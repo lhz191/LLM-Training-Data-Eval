@@ -9,15 +9,25 @@ Diversity 多样性指标
 
 使用方式:
     from diversity import compute_diversity
+    from loaders import ToolBenchLoader
+    
+    loader = ToolBenchLoader('/path/to/toolbench.json')
     
     results = compute_diversity(
         data_iterator=loader.iterate(),
-        dataset_name='OpenMathInstruct-1',
+        dataset_name='ToolBench',
         method='knn',  # 或 'vendi'
-        field='question',
-        embedding_cache_path='embeddings/openmath_question.npy',
+        field='query',
+        embedding_cache_path='embeddings/toolbench_query.npy',
     )
 """
+
+# 在任何 import 之前设置线程限制，防止 OpenBLAS 崩溃
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '32'
+os.environ['OMP_NUM_THREADS'] = '32'
+os.environ['MKL_NUM_THREADS'] = '32'
+os.environ['NUMEXPR_NUM_THREADS'] = '32'
 
 import os
 import json
@@ -28,7 +38,11 @@ from datetime import datetime
 from typing import Optional, Iterator, Dict, Any, List
 from tqdm import tqdm
 
-from data_types import MathSample
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from data_types import APIAgentSample
 
 
 # =============================================================================
@@ -218,8 +232,8 @@ def generate_embeddings_transformers(
 
 
 def generate_embeddings(
-    data_iterator: Iterator[MathSample],
-    field: str = "question",
+    data_iterator: Iterator[APIAgentSample],
+    field: str = "query",
     model_name: str = "all-MiniLM-L6-v2",
     batch_size: int = 64,
     max_samples: Optional[int] = None,
@@ -230,8 +244,8 @@ def generate_embeddings(
     生成 embedding
     
     Args:
-        data_iterator: MathSample 迭代器
-        field: 要提取的字段 ('question', 'solution', 'both')
+        data_iterator: APIAgentSample 迭代器
+        field: 要提取的字段 ('query', 'tools', 'both')
         model_name: 模型名称，支持:
             - sentence-transformers: 'all-MiniLM-L6-v2', 'all-mpnet-base-v2'
             - transformers: 'Qwen/Qwen3-Embedding-8B'
@@ -269,22 +283,23 @@ def generate_embeddings(
             break
         
         # 提取文本
-        if field == "question":
-            text = sample.question or ""
-        elif field == "solution":
-            solution = sample.solution
-            if isinstance(solution, list):
-                text = "\n".join(solution)
-            else:
-                text = str(solution) if solution else ""
+        if field == "query":
+            text = sample.query or ""
+        elif field == "tools":
+            # 工具描述拼接
+            tool_texts = []
+            for tool in sample.tools:
+                tool_text = f"{tool.name}: {tool.description or ''}"
+                tool_texts.append(tool_text)
+            text = "\n".join(tool_texts)
         elif field == "both":
-            question = sample.question or ""
-            solution = sample.solution
-            if isinstance(solution, list):
-                solution = "\n".join(solution)
-            else:
-                solution = str(solution) if solution else ""
-            text = f"Question: {question}\n\nSolution: {solution}"
+            query = sample.query or ""
+            tool_texts = []
+            for tool in sample.tools:
+                tool_text = f"{tool.name}: {tool.description or ''}"
+                tool_texts.append(tool_text)
+            tools = "\n".join(tool_texts)
+            text = f"Query: {query}\n\nTools: {tools}"
         else:
             raise ValueError(f"Unknown field: {field}")
         
@@ -566,6 +581,11 @@ def compute_vendi_score(
     vendi_score = _compute_single_vendi_score(embeddings_tensor, similarity_metric)
     entropy = np.log(vendi_score)
     
+    # 清理显存
+    del embeddings_tensor
+    if device == "cuda":
+        torch.cuda.empty_cache()
+    
     print(f"Vendi Score: {vendi_score:.4f}")
     
     return {
@@ -628,17 +648,16 @@ def compute_knn_diversity(
         k = n - 1
         print(f"K 调整为 {k}")
     
-    # 构建 KNN 模型
-    print("构建 KNN 模型...")
+    # sklearn 单线程版本（避免 OpenBLAS 多线程问题）
+    print("构建 KNN 模型（单线程）...")
     nn = NearestNeighbors(
         n_neighbors=k + 1,  # +1 因为包含自己
         metric=distance_metric,
         algorithm='auto',
-        n_jobs=-1,
+        n_jobs=1,  # 单线程，避免 OpenBLAS 崩溃
     )
     nn.fit(embeddings)
     
-    # 查询所有样本的 K 近邻
     print("查询 K 近邻...")
     distances, indices = nn.kneighbors(embeddings)
     
@@ -649,9 +668,6 @@ def compute_knn_diversity(
     mean_distance = float(np.mean(k_distances))
     std_distance = float(np.std(k_distances))
     median_distance = float(np.median(k_distances))
-    
-    # 每个样本的平均 K 近邻距离
-    per_sample_mean = np.mean(k_distances, axis=1)
     
     print(f"KNN 平均距离: {mean_distance:.6f}")
     print(f"KNN 距离标准差: {std_distance:.6f}")
@@ -673,10 +689,10 @@ def compute_knn_diversity(
 # =============================================================================
 
 def compute_diversity(
-    data_iterator: Iterator[MathSample],
+    data_iterator: Iterator[APIAgentSample],
     dataset_name: str = "Unknown",
     method: str = "knn",
-    field: str = "question",
+    field: str = "query",
     embedding_model: str = "all-MiniLM-L6-v2",
     embedding_cache_path: Optional[str] = None,
     sample_size: Optional[int] = None,
@@ -699,7 +715,7 @@ def compute_diversity(
         data_iterator: 数据迭代器
         dataset_name: 数据集名称
         method: 多样性计算方法 ('knn' 或 'vendi')
-        field: 用于计算 embedding 的字段 ('question', 'solution', 'both')
+        field: 用于计算 embedding 的字段 ('query', 'tools', 'both')
         embedding_model: Embedding 模型名称，支持:
             - sentence-transformers: 'all-MiniLM-L6-v2', 'all-mpnet-base-v2'
             - transformers: 'Qwen/Qwen3-Embedding-8B'
@@ -830,13 +846,13 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Diversity 多样性评估")
     parser.add_argument("--dataset", type=str, required=True,
-                        choices=["openmathinstruct", "lila"],
+                        choices=["toolbench", "xlam"],
                         help="数据集名称")
     parser.add_argument("--method", type=str, default="knn",
                         choices=["knn", "vendi"],
                         help="多样性计算方法")
-    parser.add_argument("--field", type=str, default="question",
-                        choices=["question", "solution", "both"],
+    parser.add_argument("--field", type=str, default="query",
+                        choices=["query", "tools", "both"],
                         help="用于计算 embedding 的字段")
     parser.add_argument("--model", type=str, default="all-MiniLM-L6-v2",
                         help="Embedding 模型名称: all-MiniLM-L6-v2, all-mpnet-base-v2, Qwen/Qwen3-Embedding-8B")
@@ -850,25 +866,29 @@ if __name__ == "__main__":
                         help="KNN 的 K 值")
     parser.add_argument("--embedding-batch-size", type=int, default=None,
                         help="Embedding 生成时的 batch 大小")
+    parser.add_argument("--vendi-batch-size", type=int, default=None,
+                        help="Vendi Score 分 batch 计算的大小")
+    parser.add_argument("--num-gpus", type=int, default=None,
+                        help="Vendi Score 多 GPU 并行数量")
     
     args = parser.parse_args()
     
     # 加载数据集
-    if args.dataset == "openmathinstruct":
-        from loaders import OpenMathInstructLoader
-        loader = OpenMathInstructLoader(
-            '/mnt/petrelfs/liuhaoze/datasets/Symbolic_and_Logical_Data/OpenMathInstruct-1',
-            use_correct=True
+    if args.dataset == "toolbench":
+        from loaders import ToolBenchLoader
+        loader = ToolBenchLoader(
+            '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/toolbench_official/toolllama_G123_dfs_train.json'
         )
-        dataset_name = "OpenMathInstruct-1"
-        embedding_cache = f"embeddings/openmath_{args.field}.npy"
-    elif args.dataset == "lila":
-        from loaders import LILALoader
-        loader = LILALoader(
-            '/mnt/petrelfs/liuhaoze/datasets/Symbolic_and_Logical_Data/LILA/lila/multi/iid/train_math_only.json'
+        dataset_name = "ToolBench"
+        embedding_cache = f"embeddings/toolbench_{args.field}.npy"
+        
+    elif args.dataset == "xlam":
+        from loaders import XLAMLoader
+        loader = XLAMLoader(
+            '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/xlam_60k.jsonl'
         )
-        dataset_name = "LILA"
-        embedding_cache = f"embeddings/lila_{args.field}.npy"
+        dataset_name = "xLAM-60k"
+        embedding_cache = f"embeddings/xlam_{args.field}.npy"
     
     # 设置输出文件
     output_file = args.output
@@ -888,5 +908,6 @@ if __name__ == "__main__":
         max_samples=args.max_samples,
         k=args.k,
         embedding_batch_size=args.embedding_batch_size,
+        vendi_batch_size=args.vendi_batch_size,
+        num_gpus=args.num_gpus,
     )
-

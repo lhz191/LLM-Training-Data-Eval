@@ -25,6 +25,9 @@ os.environ['NUMEXPR_NUM_THREADS'] = '32'
 
 import sys
 sys.set_int_max_str_digits(0)
+
+# 添加父目录到 sys.path，以便导入上级模块
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argparse
 import itertools
 from datetime import datetime
@@ -92,7 +95,7 @@ def run_format_check(dataset_key: str, max_samples: int = None, parallel: bool =
     print(f"{'='*70}\n")
     
     # 导入相关模块
-    from format_check import compute_format_check, compute_format_check_parallel
+    from metrics.format_check import compute_format_check, compute_format_check_parallel
     
     if dataset_key == 'toolbench':
         from loaders import ToolBenchLoader
@@ -167,7 +170,7 @@ def run_executability(dataset_key: str, max_samples: int = None, parallel: bool 
     print(f"{'='*70}\n")
     
     # 导入相关模块
-    from executability import compute_executability, compute_executability_parallel
+    from metrics.executability import compute_executability, compute_executability_parallel
     
     if dataset_key == 'toolbench':
         from loaders import ToolBenchLoader
@@ -258,7 +261,7 @@ def run_dynamic_executability(dataset_key: str, max_samples: int = None, workers
     print(f"{'='*70}\n")
     
     # 导入相关模块
-    from dynamic_executability import compute_dynamic_executability
+    from metrics.dynamic_executability import compute_dynamic_executability
     from loaders import ToolBenchLoader
     from toolbench_executor import ToolBenchDynamicChecker
     
@@ -344,7 +347,7 @@ def run_diversity(dataset_key: str, max_samples: int = None, method: str = None,
     print(f"{'='*70}\n")
     
     # 导入相关模块
-    from diversity import compute_diversity
+    from metrics.diversity import compute_diversity
     
     if dataset_key == 'toolbench':
         from loaders import ToolBenchLoader

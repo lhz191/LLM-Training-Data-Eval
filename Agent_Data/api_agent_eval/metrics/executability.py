@@ -32,6 +32,10 @@ from typing import Optional, Iterator, Dict, List, Any
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from data_types import APIAgentSample
 from api_executor import ExecutabilityChecker
 
@@ -623,7 +627,7 @@ def _print_summary(results, elapsed, error_samples, derivability_total, derivabi
             print(f"  查询相关性 (Query-Answer Relevance):")
             print(f"    检查样本数: {relevance_total:,}")
             print(f"    通过: {relevance_passed:,} ({relevance_rate:.2%})")
-        print()
+            print()
     
     # 显示错误类型分布
     if 'error_type_distribution' in results:

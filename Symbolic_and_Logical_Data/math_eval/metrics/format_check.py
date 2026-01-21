@@ -3,24 +3,23 @@
 """
 Format Check 指标 - 数据格式验证
 
-检查 API Agent 数据集样本的格式正确性，包括：
+检查数据集样本的格式正确性，包括：
 - 必需字段是否存在
 - 字段格式是否正确
-- API 定义是否完整
-- API 调用是否合法等
+- 标签是否配对等
 
 使用方式:
     from format_check import compute_format_check
-    from loaders import ToolBenchLoader
-    from api_executor import get_format_checker
+    from loaders import OpenMathInstructLoader
+    from openmath_executor import OpenMathFormatChecker
     
-    loader = ToolBenchLoader('/path/to/toolbench.json')
-    checker = get_format_checker('toolbench')
+    loader = OpenMathInstructLoader('/path/to/OpenMathInstruct-1')
+    checker = OpenMathFormatChecker()
     
     results = compute_format_check(
         data_iterator=loader.iterate(),
         format_checker=checker,
-        dataset_name='ToolBench',
+        dataset_name='OpenMathInstruct-1',
         output_file='format_check_results.json'
     )
 """
@@ -32,20 +31,24 @@ from typing import Optional, Iterator, Dict, List, Any
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
-from data_types import APIAgentSample
-from api_executor import FormatChecker
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from data_types import MathSample
+from code_executor import FormatChecker
 
 
 # =============================================================================
 # 并行处理辅助函数
 # =============================================================================
 
-def _check_single_sample(sample: APIAgentSample, checker_class: type) -> Dict[str, Any]:
+def _check_single_sample(sample: MathSample, checker_class: type) -> Dict[str, Any]:
     """
     检查单个样本的格式（用于并行处理）
     
     Args:
-        sample: APIAgentSample 样本
+        sample: MathSample 样本
         checker_class: FormatChecker 类（不是实例，因为需要在子进程中创建）
     
     Returns:
@@ -64,7 +67,7 @@ def _check_single_sample(sample: APIAgentSample, checker_class: type) -> Dict[st
 
 
 def compute_format_check(
-    data_iterator: Iterator[APIAgentSample],
+    data_iterator: Iterator[MathSample],
     format_checker: FormatChecker,
     dataset_name: str = "unknown",
     output_file: Optional[str] = None,
@@ -75,7 +78,7 @@ def compute_format_check(
     计算 Format Check 指标
     
     Args:
-        data_iterator: APIAgentSample 迭代器
+        data_iterator: MathSample 迭代器
         format_checker: 格式检查器
         dataset_name: 数据集名称
         output_file: 结果输出文件
@@ -139,13 +142,14 @@ def compute_format_check(
             elapsed = time.time() - start_time
             rate = total / elapsed if elapsed > 0 else 0
             pass_rate = passed / total if total > 0 else 0
-            print(f"  [{total:,}/{max_samples or '?'}] {rate:.1f} 条/秒, 通过率: {pass_rate:.2%}")
-            # 显示当前批次的错误样本（完整输出，不省略）
+            print(f"  [{total}/{max_samples or '?'}] {rate:.1f} 条/秒, 通过率: {pass_rate:.2%}")
+            # 显示当前批次的错误样本
             if batch_error_ids:
+                # 排序后输出
                 try:
-                    sorted_ids = sorted(batch_error_ids, key=lambda x: int(str(x).split('_')[-1]))
+                    sorted_ids = sorted(batch_error_ids, key=lambda x: int(x.split('_')[-1]))
                 except:
-                    sorted_ids = sorted(batch_error_ids, key=str)
+                    sorted_ids = sorted(batch_error_ids)
                 print(f"    格式错误样本: {sorted_ids}")
                 batch_error_ids = []
     
@@ -177,13 +181,9 @@ def compute_format_check(
         'error_samples': error_samples,
         'warning_samples': warning_samples,
     }
-
+    
     # 保存结果
     if output_file:
-        import os
-        output_dir = os.path.dirname(output_file)
-        if output_dir and not os.path.exists(output_dir):
-            os.makedirs(output_dir)
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
         print(f"\n结果已保存到: {output_file}")
@@ -206,10 +206,10 @@ def compute_format_check(
         error_types = {}
         for sample in error_samples:
             for err in sample['errors']:
-                # 提取错误类型（去掉具体数字和详细信息）
+                # 提取错误类型（去掉具体数字）
                 err_type = err.split(':')[0] if ':' in err else err
                 error_types[err_type] = error_types.get(err_type, 0) + 1
-        for err_type, count in sorted(error_types.items(), key=lambda x: -x[1])[:20]:
+        for err_type, count in sorted(error_types.items(), key=lambda x: -x[1]):
             print(f"  {err_type}: {count:,}")
         print()
     
@@ -221,7 +221,7 @@ def compute_format_check(
             for warn in sample['warnings']:
                 warn_type = warn.split(':')[0] if ':' in warn else warn
                 warning_types[warn_type] = warning_types.get(warn_type, 0) + 1
-        for warn_type, count in sorted(warning_types.items(), key=lambda x: -x[1])[:20]:
+        for warn_type, count in sorted(warning_types.items(), key=lambda x: -x[1]):
             print(f"  {warn_type}: {count:,}")
         print()
     
@@ -233,7 +233,7 @@ def compute_format_check(
 # =============================================================================
 
 def compute_format_check_parallel(
-    data_iterator: Iterator[APIAgentSample],
+    data_iterator: Iterator[MathSample],
     format_checker_class: type,
     dataset_name: str = "unknown",
     output_file: Optional[str] = None,
@@ -246,7 +246,7 @@ def compute_format_check_parallel(
     计算 Format Check 指标（并行版本）
     
     Args:
-        data_iterator: APIAgentSample 迭代器
+        data_iterator: MathSample 迭代器
         format_checker_class: FormatChecker 类（不是实例）
         dataset_name: 数据集名称
         output_file: 结果输出文件
@@ -324,12 +324,12 @@ def compute_format_check_parallel(
                     pass_rate = passed / completed if completed > 0 else 0
                     total_str = f"{max_samples:,}" if max_samples else "?"
                     print(f"  [{completed:,}/{total_str}] {rate:.1f} 条/秒, 通过率: {pass_rate:.2%}", flush=True)
-                    # 显示当前批次的错误样本（完整输出，不省略）
+                    # 显示当前批次的错误样本（排序后输出）
                     if batch_error_ids:
                         try:
-                            sorted_ids = sorted(batch_error_ids, key=lambda x: int(str(x).split('_')[-1]))
+                            sorted_ids = sorted(batch_error_ids, key=lambda x: int(x.split('_')[-1]))
                         except:
-                            sorted_ids = sorted(batch_error_ids, key=str)
+                            sorted_ids = sorted(batch_error_ids)
                         print(f"    格式错误样本: {sorted_ids}", flush=True)
                         batch_error_ids = []
     
@@ -388,10 +388,6 @@ def compute_format_check_parallel(
     
     # 保存结果
     if output_file:
-        import os
-        output_dir = os.path.dirname(output_file)
-        if output_dir and not os.path.exists(output_dir):
-            os.makedirs(output_dir)
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
         print(f"\n结果已保存到: {output_file}")
@@ -416,7 +412,7 @@ def compute_format_check_parallel(
             for err in sample['errors']:
                 err_type = err.split(':')[0] if ':' in err else err
                 error_types[err_type] = error_types.get(err_type, 0) + 1
-        for err_type, count in sorted(error_types.items(), key=lambda x: -x[1])[:20]:
+        for err_type, count in sorted(error_types.items(), key=lambda x: -x[1]):
             print(f"  {err_type}: {count:,}")
         print()
     
@@ -428,7 +424,7 @@ def compute_format_check_parallel(
             for warn in sample['warnings']:
                 warn_type = warn.split(':')[0] if ':' in warn else warn
                 warning_types[warn_type] = warning_types.get(warn_type, 0) + 1
-        for warn_type, count in sorted(warning_types.items(), key=lambda x: -x[1])[:20]:
+        for warn_type, count in sorted(warning_types.items(), key=lambda x: -x[1]):
             print(f"  {warn_type}: {count:,}")
         print()
     
@@ -444,7 +440,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Format Check 指标评估")
     parser.add_argument("--dataset", type=str, required=True, 
-                        choices=["toolbench", "xlam"],
+                        choices=["openmathinstruct", "lila"],
                         help="数据集名称")
     parser.add_argument("--max-samples", type=int, default=None,
                         help="最大样本数（用于测试）")
@@ -454,31 +450,30 @@ if __name__ == "__main__":
                         help="使用并行模式")
     parser.add_argument("--workers", type=int, default=None,
                         help="并行线程数（默认为 CPU 核心数）")
-    parser.add_argument("--progress-interval", type=int, default=10000,
-                        help="进度显示间隔")
     
     args = parser.parse_args()
     
     # 根据数据集选择 loader 和 checker
-    if args.dataset == "toolbench":
-        from loaders import ToolBenchLoader
-        from toolbench_executor import ToolBenchFormatChecker
+    if args.dataset == "openmathinstruct":
+        from loaders import OpenMathInstructLoader
+        from openmath_executor import OpenMathFormatChecker
         
-        loader = ToolBenchLoader(
-            '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/toolbench_official/toolllama_G123_dfs_train.json'
+        loader = OpenMathInstructLoader(
+            '/mnt/petrelfs/liuhaoze/datasets/Symbolic_and_Logical_Data/OpenMathInstruct-1',
+            use_correct=True
         )
-        checker_class = ToolBenchFormatChecker
-        dataset_name = "ToolBench"
+        checker_class = OpenMathFormatChecker
+        dataset_name = "OpenMathInstruct-1"
         
-    elif args.dataset == "xlam":
-        from loaders import XLAMLoader
-        from xlam_executor import XLAMFormatChecker
+    elif args.dataset == "lila":
+        from loaders import LILALoader
+        from lila_executor import LILAFormatChecker
         
-        loader = XLAMLoader(
-            '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/xlam_60k.jsonl'
+        loader = LILALoader(
+            '/mnt/petrelfs/liuhaoze/datasets/Symbolic_and_Logical_Data/LILA/lila/multi/iid/train_math_only.json'
         )
-        checker_class = XLAMFormatChecker
-        dataset_name = "xLAM-60k"
+        checker_class = LILAFormatChecker
+        dataset_name = "LILA"
     
     # 设置输出文件
     output_file = args.output
@@ -493,7 +488,7 @@ if __name__ == "__main__":
             dataset_name=dataset_name,
             output_file=output_file,
             max_samples=args.max_samples,
-            progress_interval=args.progress_interval,
+            progress_interval=10000,
             max_workers=args.workers,
         )
     else:
@@ -504,5 +499,6 @@ if __name__ == "__main__":
             dataset_name=dataset_name,
             output_file=output_file,
             max_samples=args.max_samples,
-            progress_interval=args.progress_interval,
+            progress_interval=10000,
         )
+

@@ -24,7 +24,7 @@ echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || ec
 echo ""
 
 echo ">>> 运行 Vendi Score 评估 (Qwen3-Embedding-8B)..."
-python3 -u run_full_test.py --metric diversity --dataset xlam --diversity-method vendi --embedding-model Qwen/Qwen3-Embedding-8B --vendi-batch-size 6500 --num-gpus 8 --embedding-batch-size 4
+python3 -u scripts/run_full_test.py --metric diversity --dataset xlam --diversity-method vendi --embedding-model Qwen/Qwen3-Embedding-8B --vendi-batch-size 6500 --num-gpus 8 --embedding-batch-size 4
 
 echo ""
 echo "=========================================="

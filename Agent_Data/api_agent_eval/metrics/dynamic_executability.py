@@ -38,6 +38,10 @@ from typing import Optional, Iterator, Dict, List, Any
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from data_types import APIAgentSample
 
 

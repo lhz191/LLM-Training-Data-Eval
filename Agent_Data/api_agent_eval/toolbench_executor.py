@@ -38,8 +38,8 @@ from collections import Counter
 
 from data_types import APIAgentSample, ToolDefinition, APICall, Parameter
 from api_executor import (
-    FormatChecker, ExecutabilityChecker,
-    register_format_checker, register_executability_checker
+    FormatChecker, ExecutabilityChecker, DynamicChecker,
+    register_format_checker, register_executability_checker, register_dynamic_checker
 )
 
 
@@ -936,7 +936,7 @@ class ToolBenchExecutabilityChecker(ExecutabilityChecker):
 # ToolBench 动态可执行性检查器
 # =============================================================================
 
-class ToolBenchDynamicChecker:
+class ToolBenchDynamicChecker(DynamicChecker):
     """
     ToolBench 数据集动态可执行性检查器
     
@@ -1455,4 +1455,5 @@ class ToolBenchDynamicChecker:
 
 register_format_checker('toolbench', ToolBenchFormatChecker)
 register_executability_checker('toolbench', ToolBenchExecutabilityChecker)
+register_dynamic_checker('toolbench', ToolBenchDynamicChecker)
 

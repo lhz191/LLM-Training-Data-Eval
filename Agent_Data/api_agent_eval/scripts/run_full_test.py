@@ -78,10 +78,10 @@ def run_format_check(dataset_key: str, max_samples: int = None, parallel: bool =
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'format_check_results.json')
     
@@ -153,10 +153,10 @@ def run_executability(dataset_key: str, max_samples: int = None, parallel: bool 
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'executability_results.json')
     
@@ -244,10 +244,10 @@ def run_dynamic_executability(dataset_key: str, max_samples: int = None, workers
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'dynamic_executability_results.json')
     
@@ -316,10 +316,10 @@ def run_diversity(dataset_key: str, max_samples: int = None, method: str = None,
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     
     # 使用参数或配置的默认值

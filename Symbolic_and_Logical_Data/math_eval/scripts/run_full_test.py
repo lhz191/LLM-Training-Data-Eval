@@ -218,9 +218,11 @@ def run_dataset(dataset_key: str, parallel: bool = False, num_workers: int = Non
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_file = os.path.join(script_dir, config['result_file'])
-    log_file = os.path.join(script_dir, config['log_file'])
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, 'validity_results.json')
+    log_file = os.path.join(output_dir, 'validity_details.log')
     
     print(f"\n{'='*70}")
     print(f"开始验证: {config['name']}")
@@ -299,8 +301,10 @@ def run_faithfulness(dataset_key: str, max_samples: int = None):
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_file = os.path.join(script_dir, f"{dataset_key}_faithfulness_results.json")
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, 'faithfulness_results.json')
     
     print(f"\n{'='*70}")
     print(f"Faithfulness 评估: {config['name']}")
@@ -338,14 +342,8 @@ def run_reasoning_validity(dataset_key: str, max_samples: int = None):
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # 根据数据集类型选择输出目录
-    if 'lila' in dataset_key:
-        output_dir = os.path.join(script_dir, 'results', 'lila')
-    elif 'openmath' in dataset_key:
-        output_dir = os.path.join(script_dir, 'results', 'openmath')
-    else:
-        output_dir = os.path.join(script_dir, 'results')
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'reasoning_validity_results.json')
     
@@ -389,14 +387,8 @@ def run_format_check(dataset_key: str, max_samples: int = None, parallel: bool =
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # 根据数据集类型选择输出目录
-    if 'lila' in dataset_key:
-        output_dir = os.path.join(script_dir, 'results', 'lila')
-    elif 'openmath' in dataset_key:
-        output_dir = os.path.join(script_dir, 'results', 'openmath')
-    else:
-        output_dir = os.path.join(script_dir, 'results')
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'format_check_results.json')
     
@@ -462,15 +454,8 @@ def run_diversity(dataset_key: str, max_samples: int = None, method: str = None,
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # 根据数据集类型选择输出目录
-    if 'lila' in dataset_key:
-        output_dir = os.path.join(script_dir, 'results', 'lila')
-    elif 'openmath' in dataset_key:
-        output_dir = os.path.join(script_dir, 'results', 'openmath')
-    else:
-        output_dir = os.path.join(script_dir, 'results')
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     
     # 使用参数或配置的默认值
@@ -480,7 +465,7 @@ def run_diversity(dataset_key: str, max_samples: int = None, method: str = None,
     
     # 生成包含模型名的 embedding 缓存路径
     model_short_name = emb_model.split('/')[-1] if '/' in emb_model else emb_model
-    embedding_cache = os.path.join(script_dir, f'embeddings/{dataset_key}_question_{model_short_name}.npy')
+    embedding_cache = os.path.join(module_dir, f'embeddings/{dataset_key}_question_{model_short_name}.npy')
     
     # 生成包含模型名的输出文件名
     # 处理模型名中的特殊字符（如 Qwen/Qwen3-Embedding-8B -> Qwen3-Embedding-8B）

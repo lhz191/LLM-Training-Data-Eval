@@ -53,10 +53,10 @@ def run_frame_diversity(dataset_key: str, max_samples: int = None):
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'frame_diversity_results.json')
     
@@ -101,10 +101,10 @@ def run_semantic_diversity(dataset_key: str, max_samples: int = None):
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'semantic_diversity_results.json')
     
@@ -149,10 +149,10 @@ def run_object_consistency(dataset_key: str, max_samples: int = None):
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'object_consistency_results.json')
     
@@ -197,10 +197,10 @@ def run_cross_modal_consistency(dataset_key: str, max_samples: int = None):
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'cross_modal_consistency_results.json')
     
@@ -254,10 +254,10 @@ def run_safety_bench(dataset_key: str, max_samples: int = None, api_key: str = N
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'safety_bench_results.json')
     
@@ -307,10 +307,10 @@ def run_holistic_fidelity(dataset_key: str, max_samples: int = None, dimensions:
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'holistic_fidelity_results.json')
     

@@ -54,10 +54,10 @@ def run_inception_score(dataset_key: str, max_samples: int = None, batch_size: i
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'inception_score_results.json')
     
@@ -118,10 +118,10 @@ def run_prompt_fidelity(dataset_key: str, max_samples: int = None, batch_size: i
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'prompt_fidelity_results.json')
     
@@ -181,10 +181,10 @@ def run_well_formed_rate(dataset_key: str, max_samples: int = None, strict: bool
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'well_formed_rate_results.json')
     
@@ -200,6 +200,7 @@ def run_well_formed_rate(dataset_key: str, max_samples: int = None, strict: bool
     from loaders import GeneralLoader
     from metrics.well_formed_rate import compute_well_formed_rate
     from image_executor import get_format_checker
+    import coco_executor  # 触发注册
     import itertools
     
     loader = GeneralLoader(config['data_path'])
@@ -245,10 +246,10 @@ def run_c2pa_validation(dataset_key: str, max_samples: int = None, c2pa_tool: st
         return
     
     config = DATASETS[dataset_key]
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录
-    output_dir = os.path.join(script_dir, 'results', dataset_key)
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'c2pa_validation_results.json')
     

@@ -98,3 +98,6 @@ Vision_Language_Data/*
 
 Agent_Data/api_agent_eval/cache/*
 !Agent_Data/api_agent_eval/cache/.gitkeep
+
+Agent_Data/text_gui_agent_eval/results/*
+!Agent_Data/text_gui_agent_eval/results/.gitkeep

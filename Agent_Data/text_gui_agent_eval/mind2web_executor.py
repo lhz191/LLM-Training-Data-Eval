@@ -32,7 +32,12 @@ import os
 import time
 from typing import List, Dict, Any, Tuple, Optional
 
-from text_gui_executor import StaticExecutabilityChecker, register_static_checker
+from text_gui_executor import (
+    StaticExecutabilityChecker, 
+    DynamicExecutabilityChecker,
+    register_static_checker,
+    register_dynamic_checker,
+)
 from data_types import Record, Action
 
 try:
@@ -426,6 +431,239 @@ def find_element_by_all_attributes(page, info, bbox=None):
     return None, None
 
 
+# =============================================================================
+# 公共验证函数（可被静态/动态检查器复用）
+# =============================================================================
+
+def verify_by_coords(page, target_element) -> Tuple[bool, str, Any]:
+    """
+    坐标定位验证（公共函数，来自 verify_dynamic.py 的 verify_by_coords1）
+    
+    使用 bounding_box 坐标定位元素，验证是否能找到匹配的元素。
+    
+    Args:
+        page: Playwright page 对象
+        target_element: 目标元素字典（pos_candidate 格式）
+        
+    Returns:
+        (success, reason, element)
+    """
+    if not target_element:
+        return False, "no_target_element", None
+    
+    # 解析候选信息
+    candidate_info = parse_candidate(target_element)
+    bbox = candidate_info.get('bbox')
+    expected_tag = candidate_info.get('tag', '').lower()
+    
+    if not bbox:
+        return False, "no_bbox", None
+    
+    print(f"    [坐标] 数据集 bbox: ({bbox['x']:.1f}, {bbox['y']:.1f}, {bbox['width']:.1f}x{bbox['height']:.1f})")
+    print(f"    [期望] tag={expected_tag}, size={bbox['width']:.0f}x{bbox['height']:.0f}")
+    
+    # 获取页面高度
+    try:
+        page_height = page.evaluate("document.documentElement.scrollHeight")
+    except Exception as e:
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+            page_height = page.evaluate("document.documentElement.scrollHeight")
+        except Exception as e2:
+            return False, f"navigation_error: {e2}", None
+    
+    # 滚动到目标位置
+    center_y = bbox['y'] + bbox['height'] / 2
+    scroll_y = max(0, center_y - 300)
+    page.evaluate(f"window.scrollTo(0, {scroll_y})")
+    time.sleep(1)
+    
+    scroll_top = page.evaluate("window.pageYOffset")
+    
+    # 定义 3 个检测点：左上、中心、右下
+    check_points = [
+        ('左上', bbox['x'], bbox['y']),
+        ('中心', bbox['x'] + bbox['width'] / 2, bbox['y'] + bbox['height'] / 2),
+        ('右下', bbox['x'] + bbox['width'], bbox['y'] + bbox['height']),
+    ]
+    
+    expected_w = bbox['width']
+    expected_h = bbox['height']
+    expected_cx = bbox['x'] + expected_w / 2
+    expected_cy = bbox['y'] + expected_h / 2
+    
+    last_top_element = None
+    
+    # 遍历 3 个检测点
+    for point_name, target_x, target_y in check_points:
+        viewport_y = target_y - scroll_top
+        
+        if viewport_y < 0 or viewport_y > VIEWPORT_HEIGHT:
+            continue
+        
+        # 用 elementsFromPoint 获取该坐标下所有层叠元素
+        all_elements = page.evaluate(f"""() => {{
+            const elements = document.elementsFromPoint({target_x}, {viewport_y});
+            return elements.map((el, idx) => ({{
+                index: idx,
+                tag: el.tagName.toLowerCase(),
+                id: el.id || '',
+                className: (el.className || '').toString().substring(0, 50),
+                rect: (() => {{
+                    const r = el.getBoundingClientRect();
+                    return {{x: r.x, y: r.y, width: r.width, height: r.height}};
+                }})()
+            }}));
+        }}""")
+        
+        if not all_elements:
+            continue
+        
+        # 遍历所有层叠元素
+        for elem_info in all_elements:
+            elem_idx = elem_info['index']
+            
+            element = page.evaluate_handle(f"""() => {{
+                const elements = document.elementsFromPoint({target_x}, {viewport_y});
+                return elements[{elem_idx}];
+            }}""")
+            
+            is_null = page.evaluate("(el) => el === null", element)
+            if is_null:
+                continue
+            
+            last_top_element = element
+            
+            # 检查该元素本身是否匹配
+            is_match, reason, matched, total = verify_element_match(page, element, candidate_info)
+            if is_match:
+                print(f"    [{point_name}] 第{elem_idx}层元素直接匹配成功")
+                print(f"    ✓ 匹配成功 ({matched}/{total}): {reason}")
+                try:
+                    page.evaluate("(el) => el.style.border='3px solid green'", element)
+                except:
+                    pass
+                return True, f"success@{point_name}_layer{elem_idx} ({matched}/{total})", element
+            
+            # 搜索子元素
+            children_info = page.evaluate(f"""(el) => {{
+                const tag = '{expected_tag}';
+                const children = el.querySelectorAll(tag);
+                const results = [];
+                
+                for (let i = 0; i < children.length && i < 500; i++) {{
+                    const child = children[i];
+                    const rect = child.getBoundingClientRect();
+                    
+                    if (rect.width > 0 && rect.height > 0) {{
+                        results.push({{
+                            index: i,
+                            rect: {{x: rect.x, y: rect.y, width: rect.width, height: rect.height}}
+                        }});
+                    }}
+                }}
+                return results;
+            }}""", element)
+            
+            if not children_info:
+                continue
+            
+            # 找最佳匹配的子元素
+            best_match_idx = -1
+            best_score = float('inf')
+            
+            for child in children_info:
+                rect = child['rect']
+                size_diff = abs(rect['width'] - expected_w) + abs(rect['height'] - expected_h)
+                child_cx = rect['x'] + rect['width'] / 2
+                child_cy = rect['y'] + scroll_top + rect['height'] / 2
+                pos_diff = ((child_cx - expected_cx)**2 + (child_cy - expected_cy)**2)**0.5
+                score = size_diff * 2 + pos_diff
+                
+                if score < best_score:
+                    best_score = score
+                    best_match_idx = child['index']
+            
+            if best_match_idx < 0:
+                continue
+            
+            best_child = page.evaluate_handle(f"""(el) => {{
+                const children = el.querySelectorAll('{expected_tag}');
+                return children[{best_match_idx}];
+            }}""", element)
+            
+            best_rect = page.evaluate("""(el) => {
+                const rect = el.getBoundingClientRect();
+                return {x: rect.x, y: rect.y, width: rect.width, height: rect.height};
+            }""", best_child)
+            
+            size_diff = abs(best_rect['width'] - expected_w) + abs(best_rect['height'] - expected_h)
+            
+            if size_diff > 5:
+                continue
+            
+            is_match, reason, matched, total = verify_element_match(page, best_child, candidate_info)
+            if is_match:
+                print(f"    [{point_name}] 第{elem_idx}层的子元素匹配")
+                print(f"    ✓ 子元素匹配成功 ({matched}/{total}): {reason}")
+                try:
+                    page.evaluate("(el) => el.style.border='3px solid green'", best_child)
+                except:
+                    pass
+                return True, f"success_child@{point_name}_layer{elem_idx}[{best_match_idx}] ({matched}/{total})", best_child
+    
+    # 所有点都失败
+    if last_top_element:
+        top_info = page.evaluate("""(el) => ({
+            tag: el.tagName.toLowerCase(),
+            rect: el.getBoundingClientRect()
+        })""", last_top_element)
+        print(f"    [顶层元素] <{top_info['tag']}> @ ({top_info['rect']['x']:.0f},{top_info['rect']['y']:.0f})")
+        print(f"    ✗ 3个检测点都未找到匹配的 <{expected_tag}> 元素")
+        try:
+            page.evaluate("(el) => el.style.border='3px solid orange'", last_top_element)
+        except:
+            pass
+        return False, "no_match_all_points", last_top_element
+    else:
+        return False, "element_not_found_at_coords", None
+
+
+def verify_by_attrs(page, target_element) -> Tuple[bool, str, Any]:
+    """
+    属性定位验证（公共函数，来自 verify_dynamic.py 的 verify_by_attrs）
+    
+    使用 tag/class/id 等属性定位元素。
+    
+    Args:
+        page: Playwright page 对象
+        target_element: 目标元素字典（pos_candidate 格式）
+        
+    Returns:
+        (success, reason, element)
+    """
+    if not target_element:
+        return False, "no_target_element", None
+    
+    # 解析候选信息
+    candidate_info = parse_candidate(target_element)
+    bbox = candidate_info.get('bbox')
+    
+    # 用属性定位元素
+    element, method = find_element_by_all_attributes(page, candidate_info, bbox=bbox)
+    
+    if element:
+        print(f"    ✓ 找到元素 ({method})")
+        try:
+            page.evaluate("(el) => el.style.border='3px solid blue'", element)
+        except:
+            pass
+        return True, f"success: {method}", element
+    else:
+        print(f"    ✗ 未找到元素")
+        return False, "element_not_found", None
+
+
 def verify_element_match(page, element_handle, expected_info):
     """
     验证找到的元素是否与数据集描述匹配
@@ -766,239 +1004,16 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
         return None
     
     # =========================================================================
-    # 内化的验证函数（来自 verify_dynamic.py，改为直接使用 Action 对象）
+    # 验证方法（调用公共函数）
     # =========================================================================
     
     def _verify_by_coords(self, action: Action) -> Tuple[bool, str, Any]:
-        """
-        坐标定位验证（内化自 verify_by_coords1）
-        
-        直接使用 Action.target_element，无需构建 raw_action dict。
-        
-        Args:
-            action: Action 对象
-            
-        Returns:
-            (success, reason, element)
-        """
-        target_element = action.target_element
-        
-        if not target_element:
-            return False, "no_target_element", None
-        
-        # 解析候选信息
-        candidate_info = parse_candidate(target_element)
-        bbox = candidate_info.get('bbox')
-        expected_tag = candidate_info.get('tag', '').lower()
-        
-        if not bbox:
-            return False, "no_bbox", None
-        
-        page = self._page
-        
-        print(f"    [坐标] 数据集 bbox: ({bbox['x']:.1f}, {bbox['y']:.1f}, {bbox['width']:.1f}x{bbox['height']:.1f})")
-        print(f"    [期望] tag={expected_tag}, size={bbox['width']:.0f}x{bbox['height']:.0f}")
-        
-        # 获取页面高度
-        try:
-            page_height = page.evaluate("document.documentElement.scrollHeight")
-        except Exception as e:
-            try:
-                page.wait_for_load_state("domcontentloaded", timeout=10000)
-                page_height = page.evaluate("document.documentElement.scrollHeight")
-            except Exception as e2:
-                return False, f"navigation_error: {e2}", None
-        
-        # 滚动到目标位置
-        center_y = bbox['y'] + bbox['height'] / 2
-        scroll_y = max(0, center_y - 300)
-        page.evaluate(f"window.scrollTo(0, {scroll_y})")
-        time.sleep(1)
-        
-        scroll_top = page.evaluate("window.pageYOffset")
-        
-        # 定义 3 个检测点：左上、中心、右下
-        check_points = [
-            ('左上', bbox['x'], bbox['y']),
-            ('中心', bbox['x'] + bbox['width'] / 2, bbox['y'] + bbox['height'] / 2),
-            ('右下', bbox['x'] + bbox['width'], bbox['y'] + bbox['height']),
-        ]
-        
-        expected_w = bbox['width']
-        expected_h = bbox['height']
-        expected_cx = bbox['x'] + expected_w / 2
-        expected_cy = bbox['y'] + expected_h / 2
-        
-        last_top_element = None
-        
-        # 遍历 3 个检测点
-        for point_name, target_x, target_y in check_points:
-            viewport_y = target_y - scroll_top
-            
-            if viewport_y < 0 or viewport_y > VIEWPORT_HEIGHT:
-                continue
-            
-            # 用 elementsFromPoint 获取该坐标下所有层叠元素
-            all_elements = page.evaluate(f"""() => {{
-                const elements = document.elementsFromPoint({target_x}, {viewport_y});
-                return elements.map((el, idx) => ({{
-                    index: idx,
-                    tag: el.tagName.toLowerCase(),
-                    id: el.id || '',
-                    className: (el.className || '').toString().substring(0, 50),
-                    rect: (() => {{
-                        const r = el.getBoundingClientRect();
-                        return {{x: r.x, y: r.y, width: r.width, height: r.height}};
-                    }})()
-                }}));
-            }}""")
-            
-            if not all_elements:
-                continue
-            
-            # 遍历所有层叠元素
-            for elem_info in all_elements:
-                elem_idx = elem_info['index']
-                
-                element = page.evaluate_handle(f"""() => {{
-                    const elements = document.elementsFromPoint({target_x}, {viewport_y});
-                    return elements[{elem_idx}];
-                }}""")
-                
-                is_null = page.evaluate("(el) => el === null", element)
-                if is_null:
-                    continue
-                
-                last_top_element = element
-                
-                # 检查该元素本身是否匹配
-                is_match, reason, matched, total = verify_element_match(page, element, candidate_info)
-                if is_match:
-                    print(f"    [{point_name}] 第{elem_idx}层元素直接匹配成功")
-                    print(f"    ✓ 匹配成功 ({matched}/{total}): {reason}")
-                    try:
-                        page.evaluate("(el) => el.style.border='3px solid green'", element)
-                    except:
-                        pass
-                    return True, f"success@{point_name}_layer{elem_idx} ({matched}/{total})", element
-                
-                # 搜索子元素
-                children_info = page.evaluate(f"""(el) => {{
-                    const tag = '{expected_tag}';
-                    const children = el.querySelectorAll(tag);
-                    const results = [];
-                    
-                    for (let i = 0; i < children.length && i < 500; i++) {{
-                        const child = children[i];
-                        const rect = child.getBoundingClientRect();
-                        
-                        if (rect.width > 0 && rect.height > 0) {{
-                            results.push({{
-                                index: i,
-                                rect: {{x: rect.x, y: rect.y, width: rect.width, height: rect.height}}
-                            }});
-                        }}
-                    }}
-                    return results;
-                }}""", element)
-                
-                if not children_info:
-                    continue
-                
-                # 找最佳匹配的子元素
-                best_match_idx = -1
-                best_score = float('inf')
-                
-                for child in children_info:
-                    rect = child['rect']
-                    size_diff = abs(rect['width'] - expected_w) + abs(rect['height'] - expected_h)
-                    child_cx = rect['x'] + rect['width'] / 2
-                    child_cy = rect['y'] + scroll_top + rect['height'] / 2
-                    pos_diff = ((child_cx - expected_cx)**2 + (child_cy - expected_cy)**2)**0.5
-                    score = size_diff * 2 + pos_diff
-                    
-                    if score < best_score:
-                        best_score = score
-                        best_match_idx = child['index']
-                
-                if best_match_idx < 0:
-                    continue
-                
-                best_child = page.evaluate_handle(f"""(el) => {{
-                    const children = el.querySelectorAll('{expected_tag}');
-                    return children[{best_match_idx}];
-                }}""", element)
-                
-                best_rect = page.evaluate("""(el) => {
-                    const rect = el.getBoundingClientRect();
-                    return {x: rect.x, y: rect.y, width: rect.width, height: rect.height};
-                }""", best_child)
-                
-                size_diff = abs(best_rect['width'] - expected_w) + abs(best_rect['height'] - expected_h)
-                
-                if size_diff > 5:
-                    continue
-                
-                is_match, reason, matched, total = verify_element_match(page, best_child, candidate_info)
-                if is_match:
-                    print(f"    [{point_name}] 第{elem_idx}层的子元素匹配")
-                    print(f"    ✓ 子元素匹配成功 ({matched}/{total}): {reason}")
-                    try:
-                        page.evaluate("(el) => el.style.border='3px solid green'", best_child)
-                    except:
-                        pass
-                    return True, f"success_child@{point_name}_layer{elem_idx}[{best_match_idx}] ({matched}/{total})", best_child
-        
-        # 所有点都失败
-        if last_top_element:
-            top_info = page.evaluate("""(el) => ({
-                tag: el.tagName.toLowerCase(),
-                rect: el.getBoundingClientRect()
-            })""", last_top_element)
-            print(f"    [顶层元素] <{top_info['tag']}> @ ({top_info['rect']['x']:.0f},{top_info['rect']['y']:.0f})")
-            print(f"    ✗ 3个检测点都未找到匹配的 <{expected_tag}> 元素")
-            try:
-                page.evaluate("(el) => el.style.border='3px solid orange'", last_top_element)
-            except:
-                pass
-            return False, "no_match_all_points", last_top_element
-        else:
-            return False, "element_not_found_at_coords", None
+        """坐标定位验证（调用公共函数）"""
+        return verify_by_coords(self._page, action.target_element)
     
     def _verify_by_attrs(self, action: Action) -> Tuple[bool, str, Any]:
-        """
-        属性定位验证（内化自 verify_by_attrs）
-        
-        直接使用 Action.target_element。
-        
-        Args:
-            action: Action 对象
-            
-        Returns:
-            (success, reason, element)
-        """
-        target_element = action.target_element
-        
-        if not target_element:
-            return False, "no_target_element", None
-        
-        # 解析候选信息
-        candidate_info = parse_candidate(target_element)
-        bbox = candidate_info.get('bbox')
-        
-        # 用属性定位元素
-        element, method = find_element_by_all_attributes(self._page, candidate_info, bbox=bbox)
-        
-        if element:
-            print(f"    ✓ 找到元素 ({method})")
-            try:
-                self._page.evaluate("(el) => el.style.border='3px solid blue'", element)
-            except:
-                pass
-            return True, f"success: {method}", element
-        else:
-            print(f"    ✗ 未找到元素")
-            return False, "element_not_found", None
+        """属性定位验证（调用公共函数）"""
+        return verify_by_attrs(self._page, action.target_element)
     
     def _verify_single_action(
         self,
@@ -1144,70 +1159,476 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
         
         return errors, warnings, stats
     
-    def check_batch(
-        self,
-        records: List[Record],
-        verbose: bool = True,
-    ) -> Dict[str, Any]:
+    def __del__(self):
+        """析构时关闭浏览器"""
+        self._close_browser()
+
+
+# =============================================================================
+# 动态可执行性检查器
+# =============================================================================
+
+class Mind2WebDynamicChecker(DynamicExecutabilityChecker):
+    """
+    Mind2Web 动态可执行性检查器
+    
+    在真实网站上执行 Action 序列，验证是否可以成功执行。
+    """
+    
+    def __init__(self, headless: bool = True, timeout: int = 60):
+        if not HAS_PLAYWRIGHT:
+            raise ImportError("Playwright is required")
+        
+        self.headless = headless
+        self.timeout = timeout * 1000
+        self._playwright = None
+        self._browser = None
+        self._page = None
+    
+    def _ensure_browser(self):
+        """确保浏览器已启动（配置来自 verify_dynamic.py）"""
+        if self._page is None:
+            self._playwright = sync_playwright().start()
+            # 启动浏览器（与官方一致的设置）
+            self._browser = self._playwright.chromium.launch(
+                headless=self.headless,
+                args=[
+                    "--disable-blink-features=AutomationControlled",  # 反检测
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-web-security",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                    "--disable-site-isolation-trials",
+                ]
+            )
+            # 创建上下文（与官方一致的视口大小）
+            context = self._browser.new_context(
+                viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            self._page = context.new_page()
+            # 注入反检测脚本
+            self._page.add_init_script("""
+                // 隐藏 webdriver 标志
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                // 伪造 plugins
+                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                // 伪造语言
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            """)
+    
+    def _close_browser(self):
+        """关闭浏览器"""
+        if self._browser:
+            self._browser.close()
+            self._browser = None
+            self._page = None
+        if self._playwright:
+            self._playwright.stop()
+            self._playwright = None
+    
+    # =========================================================================
+    # 辅助方法
+    # =========================================================================
+    
+    # 特殊 URL 映射（不符合 www.xxx.com 模式的网站）
+    SPECIAL_URL_MAPPING = {
+        'new.mta.info': 'https://www.mta.info/',
+        'mta.info': 'https://www.mta.info/',
+    }
+    
+    def _guess_url(self, website: str) -> str:
+        """根据 website 名称猜测 URL"""
+        if not website:
+            return None
+        
+        website_lower = website.lower()
+        
+        # 1. 特殊映射
+        if website_lower in self.SPECIAL_URL_MAPPING:
+            return self.SPECIAL_URL_MAPPING[website_lower]
+        
+        # 2. 自动猜测
+        if '.' in website:
+            parts = website.split('.')
+            if len(parts) == 2 and parts[1] in ['com', 'org', 'net', 'info', 'io', 'fm']:
+                return f'https://www.{website}'
+            else:
+                return f'https://{website}.com'
+        
+        return f'https://www.{website}.com'
+    
+    def _dismiss_overlays(self):
+        """尝试关闭页面上常见的遮罩层、弹窗、Cookie 同意框等"""
+        print("  检查并关闭遮罩层/弹窗...")
+        page = self._page
+        
+        # 常见的关闭按钮选择器
+        close_selectors = [
+            # Cookie 同意
+            "button[id*='accept']",
+            "button[id*='cookie']",
+            "button[class*='accept']",
+            "button[class*='cookie']",
+            "button[class*='consent']",
+            "a[id*='accept']",
+            "[aria-label*='accept']",
+            "[aria-label*='Accept']",
+            "[aria-label*='close']",
+            "[aria-label*='Close']",
+            "[aria-label*='dismiss']",
+            # 关闭按钮
+            "button[class*='close']",
+            "button[class*='dismiss']",
+            ".close-button",
+            ".modal-close",
+            ".popup-close",
+            # OneTrust Cookie Banner (常见)
+            "#onetrust-accept-btn-handler",
+            ".onetrust-close-btn-handler",
+        ]
+        
+        closed_count = 0
+        for selector in close_selectors:
+            try:
+                elements = page.query_selector_all(selector)
+                for elem in elements:
+                    if elem.is_visible():
+                        try:
+                            elem.click(timeout=1000)
+                            closed_count += 1
+                            time.sleep(0.5)
+                        except:
+                            pass
+            except:
+                pass
+        
+        # 尝试隐藏常见的遮罩层
+        overlay_selectors = [
+            "[class*='overlay']",
+            "[class*='modal']",
+            "[class*='curtain']",
+            "[class*='backdrop']",
+            "[class*='popup']",
+            "[class*='cookie']",
+            "[class*='consent']",
+            "[id*='overlay']",
+            "[id*='modal']",
+            "[id*='popup']",
+            "[id*='cookie']",
+            "#onetrust-banner-sdk",
+        ]
+        
+        hidden_count = 0
+        for selector in overlay_selectors:
+            try:
+                elements = page.query_selector_all(selector)
+                for elem in elements:
+                    if elem.is_visible():
+                        try:
+                            box = elem.bounding_box()
+                            if box and box['width'] > VIEWPORT_WIDTH * 0.5 and box['height'] > VIEWPORT_HEIGHT * 0.3:
+                                page.evaluate("(el) => el.style.display='none'", elem)
+                                hidden_count += 1
+                        except:
+                            pass
+            except:
+                pass
+        
+        if closed_count > 0 or hidden_count > 0:
+            print(f"    已处理 {closed_count} 个弹窗, 隐藏 {hidden_count} 个遮罩层")
+            time.sleep(1)
+        else:
+            print(f"    未发现需要处理的遮罩层")
+    
+    def _execute_action(
+        self, 
+        action: Action, 
+        element=None, 
+        use_coords_element: bool = True
+    ) -> Tuple[bool, str]:
         """
-        批量检查多个 Record
+        执行单个操作（照搬自 verify_dynamic.py 的 execute_action）
         
         Args:
-            records: Record 列表
-            verbose: 是否打印进度
+            action: Action 对象
+            element: 预先定位的元素（可选）
+            use_coords_element: 如果没有传入 element，是否使用坐标定位
             
         Returns:
-            批量统计结果
+            (success, reason)
         """
-        all_results = []
-        total_verified = 0
-        total_coord = 0
-        total_attr = 0
+        page = self._page
+        target_element = action.target_element
+        operation = action.metadata.get('operation', {})
+        op = operation.get('op', '')
+        value = operation.get('value', '')
         
+        # 如果没有传入元素，需要先定位
+        if element is None:
+            if not target_element:
+                return False, "no_target_element"
+            
+            candidate_info = parse_candidate(target_element)
+            bbox = candidate_info.get('bbox')
+            
+            if use_coords_element and bbox:
+                # 使用坐标定位
+                center_x = bbox['x'] + bbox['width'] / 2
+                center_y = bbox['y'] + bbox['height'] / 2
+                scroll_y = max(0, bbox['y'] - 200)
+                page.evaluate(f"window.scrollTo(0, {scroll_y})")
+                time.sleep(0.3)
+                scroll_top = page.evaluate("window.pageYOffset")
+                viewport_y = center_y - scroll_top
+                element = page.evaluate_handle(
+                    "(args) => document.elementFromPoint(args.x, args.y)",
+                    {"x": center_x, "y": viewport_y}
+                )
+                is_null = page.evaluate("(el) => el === null", element)
+                if is_null:
+                    return False, "element_not_found_by_coords"
+            else:
+                # 使用属性定位
+                element, method = find_element_by_all_attributes(page, candidate_info, bbox=bbox)
+                if not element:
+                    return False, "element_not_found_by_attrs"
+        
+        # 执行操作
         try:
-            for idx, record in enumerate(records):
-                if verbose:
-                    print(f"[{idx+1}/{len(records)}] {record.metadata.get('annotation_id', '')[:8]}...", end=" ")
-                
-                errors, warnings, stats = self.check(record)
-                all_results.append({
-                    'sample_id': record.sample_id,
-                    'annotation_id': record.metadata.get('annotation_id', ''),
-                    'website': record.website,
-                    'errors': errors,
-                    'warnings': warnings,
-                    'stats': stats,
-                })
-                
-                total_verified += stats['verified_actions']
-                total_coord += stats['coord_success']
-                total_attr += stats['attr_success']
-                
-                if verbose:
-                    v = stats['verified_actions']
-                    if v > 0:
-                        print(f"坐标: {stats['coord_success']}/{v} ({stats['coord_rate']:.0%}) | "
-                              f"属性: {stats['attr_success']}/{v} ({stats['attr_rate']:.0%})")
+            # 滚动到元素
+            try:
+                element.scroll_into_view_if_needed()
+            except:
+                pass
+            time.sleep(0.5)
+            
+            if op == 'CLICK':
+                element.click()
+                print(f"    ✓ 点击成功")
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except:
+                    pass
+                time.sleep(1)
+                return True, "success"
+            
+            elif op == 'HOVER':
+                element.hover()
+                print(f"    ✓ 悬停成功")
+                time.sleep(1)
+                return True, "success"
+            
+            elif op == 'TYPE':
+                element.click()
+                time.sleep(0.3)
+                # 选中已有文本
+                try:
+                    page.evaluate("(el) => { if(el.select) el.select(); }", element)
+                except:
+                    pass
+                page.keyboard.type(value)
+                print(f"    ✓ 输入成功: {value}")
+                time.sleep(1)
+                return True, "success"
+            
+            elif op == 'SELECT':
+                element.click()
+                time.sleep(1)
+                try:
+                    tag = page.evaluate("(el) => el.tagName.toLowerCase()", element)
+                    if tag == 'select':
+                        element.select_option(label=value)
                     else:
-                        print("⚠ 无可验证动作")
+                        option = page.locator(f"text={value}").first
+                        option.click(timeout=3000)
+                    print(f"    ✓ 选择成功: {value}")
+                    time.sleep(1)
+                    return True, "success"
+                except Exception as e:
+                    return False, f"select_error: {e}"
+            
+            else:
+                return False, f"unknown_op: {op}"
         
-        finally:
-            # 批量完成后关闭浏览器
-            self._close_browser()
+        except Exception as e:
+            return False, f"execution_error: {e}"
+    
+    # =========================================================================
+    # 主检查方法（照搬自 verify_dynamic.py 的 verify_record）
+    # =========================================================================
+    
+    def check(
+        self, 
+        record, 
+        execute: bool = True,
+        max_actions: int = None,
+    ) -> Tuple[List[str], List[str], Dict[str, Any]]:
+        """
+        在真实网站上验证并执行 Record 的 action 序列
         
-        # 汇总统计
-        return {
-            'total_records': len(records),
-            'total_verified': total_verified,
-            'total_coord_success': total_coord,
-            'total_attr_success': total_attr,
-            'coord_rate': total_coord / total_verified if total_verified > 0 else 0.0,
-            'attr_rate': total_attr / total_verified if total_verified > 0 else 0.0,
-            'results': all_results,
+        使用两个独立指标：
+        - 指标1 (坐标定位): 验证网站是否变化（数据集时效性）
+        - 指标2 (属性定位): 验证对 Agent 训练是否有用（数据集实用性）
+        
+        Args:
+            record: Record 对象
+            execute: 是否执行操作（默认 True）。如果只想验证不执行，设为 False
+            max_actions: 最多执行多少个操作（默认 None 表示全部）
+        """
+        errors = []
+        warnings = []
+        
+        website = record.website
+        task = record.instruction or "N/A"
+        actions = record.actions
+        
+        url = self._guess_url(website)
+        
+        if not url:
+            errors.append("Cannot determine website URL")
+            return errors, warnings, {
+                'total_actions': len(actions),
+                'coords_success': 0,
+                'attrs_success': 0,
+                'executed_actions': 0,
+                'action_results': [],
+            }
+        
+        print("=" * 80)
+        print(f"Mind2Web 动态验证 (Playwright)")
+        print("=" * 80)
+        print(f"网站: {website}")
+        print(f"URL: {url}")
+        print(f"任务: {task}")
+        print(f"操作数: {len(actions)}")
+        print(f"视口: {VIEWPORT_WIDTH} x {VIEWPORT_HEIGHT} (与官方一致)")
+        print(f"验证模式: 双指标独立验证")
+        print(f"  - 指标1: 坐标定位 + 属性验证 (网站变化检测) [绿框=成功, 橙框=失败]")
+        print(f"  - 指标2: 属性定位 (Agent 训练可用性) [蓝框]")
+        print("=" * 80)
+        
+        self._ensure_browser()
+        page = self._page
+        
+        # 打开网站
+        print(f"\n打开 {url}...")
+        try:
+            page.goto(url, timeout=self.timeout, wait_until="domcontentloaded")
+        except Exception as e:
+            print(f"  ⚠ 页面加载超时，尝试继续: {e}")
+            warnings.append(f"Page load timeout: {e}")
+        
+        time.sleep(10)  # 与原版一致
+        self._dismiss_overlays()
+        
+        # 验证每个操作
+        results = []
+        num_actions = min(len(actions), max_actions) if max_actions else len(actions)
+        
+        for i in range(num_actions):
+            action = actions[i]
+            action_repr = action.action_repr or f"{action.action_type} action"
+            action_uid = action.metadata.get('action_uid', 'N/A')
+            
+            operation = action.metadata.get('operation', {})
+            op = operation.get('op', '')
+            value = operation.get('value', '')
+            
+            # 输出格式与 verify_dynamic.py 对齐
+            print(f"\n{'─' * 60}")
+            print(f"步骤 {i+1}/{num_actions}: [{op}] {value}")
+            print(f"action_uid: {action_uid}")
+            print(f"操作描述: {action_repr}")
+            
+            # 打印数据集属性
+            target_element = action.target_element
+            if target_element:
+                candidate_info = parse_candidate(target_element)
+                bbox = candidate_info.get('bbox')
+                available_attrs = []
+                if candidate_info.get('tag'): available_attrs.append(f"tag={candidate_info['tag']}")
+                if candidate_info.get('id'): available_attrs.append(f"id={candidate_info['id']}")
+                if candidate_info.get('name'): available_attrs.append(f"name={candidate_info['name']}")
+                if candidate_info.get('class'): available_attrs.append(f"class={candidate_info['class']}")
+                if candidate_info.get('aria_label'): available_attrs.append(f"aria-label={candidate_info['aria_label']}")
+                if candidate_info.get('placeholder'): available_attrs.append(f"placeholder={candidate_info['placeholder']}")
+                if bbox: available_attrs.append(f"坐标=({bbox['x']:.0f},{bbox['y']:.0f},{bbox['width']:.0f}x{bbox['height']:.0f})")
+                print(f"数据集属性: {', '.join(available_attrs) if available_attrs else '无'}")
+            
+            # ===== 指标1: 坐标定位 =====
+            print(f"\n[指标1] 坐标定位 [绿框=成功, 橙框=失败]:")
+            coords_success, coords_reason, coords_element = verify_by_coords(page, target_element)
+            
+            # ===== 指标2: 属性定位 =====
+            print(f"\n[指标2] 属性定位 [蓝框]:")
+            attrs_success, attrs_reason, attrs_element = verify_by_attrs(page, target_element)
+            
+            # 简洁的结果行
+            coords_mark = "✓" if coords_success else "✗"
+            attrs_mark = "✓" if attrs_success else "✗"
+            print(f"  => 结果: 坐标 {coords_mark} | 属性 {attrs_mark}")
+            
+            # 记录结果
+            results.append({
+                'step': i,
+                'action_idx': action.action_idx,
+                'action': action_repr,
+                'op': op,
+                'value': value,
+                'coords_success': coords_success,
+                'coords_reason': coords_reason,
+                'attrs_success': attrs_success,
+                'attrs_reason': attrs_reason,
+                'executed': False,
+                'exec_reason': None,
+            })
+            
+            # ===== 执行操作（可选） =====
+            if execute:
+                # 优先用坐标定位的元素执行，其次用属性定位的元素
+                exec_element = coords_element if coords_success else (attrs_element if attrs_success else None)
+                if exec_element:
+                    print(f"\n  [执行操作]")
+                    exec_success, exec_reason = self._execute_action(action, element=exec_element)
+                    results[-1]['executed'] = exec_success
+                    results[-1]['exec_reason'] = exec_reason
+                    if not exec_success:
+                        print(f"  ⚠ 执行失败: {exec_reason}")
+                        warnings.append(f"Action {i} execution failed: {exec_reason}")
+                else:
+                    print(f"\n  [跳过执行] 两种方式都未找到元素")
+                    results[-1]['exec_reason'] = "element_not_found"
+        
+        # ===== 统计结果 =====
+        print("\n" + "=" * 80)
+        print("验证结果汇总")
+        print("=" * 80)
+        
+        total = len(results)
+        coords_success_count = sum(1 for r in results if r['coords_success'])
+        attrs_success_count = sum(1 for r in results if r['attrs_success'])
+        executed_count = sum(1 for r in results if r.get('executed'))
+        
+        print(f"\n指标1 (坐标定位 - 网站变化): {coords_success_count}/{total} ({100*coords_success_count/total:.1f}%)" if total > 0 else "")
+        print(f"指标2 (属性定位 - Agent可用): {attrs_success_count}/{total} ({100*attrs_success_count/total:.1f}%)" if total > 0 else "")
+        if execute:
+            print(f"执行成功: {executed_count}/{total} ({100*executed_count/total:.1f}%)" if total > 0 else "")
+        
+        return errors, warnings, {
+            'total_actions': total,
+            'coords_success': coords_success_count,
+            'coords_rate': coords_success_count / total if total > 0 else 0.0,
+            'attrs_success': attrs_success_count,
+            'attrs_rate': attrs_success_count / total if total > 0 else 0.0,
+            'executed_actions': executed_count,
+            'execution_rate': executed_count / total if total > 0 else 0.0,
+            'action_results': results,
+            'website': website,
+            'url': url,
         }
     
     def __del__(self):
-        """析构时关闭浏览器"""
         self._close_browser()
 
 
@@ -1216,6 +1637,7 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
 # =============================================================================
 
 register_static_checker('mind2web', Mind2WebStaticChecker)
+register_dynamic_checker('mind2web', Mind2WebDynamicChecker)
 
 
 # =============================================================================
@@ -1270,20 +1692,40 @@ def main():
     print(f"加载了 {len(records)} 条记录")
     print()
     
-    # 批量检查
-    batch_stats = checker.check_batch(records, verbose=True)
+    # 逐个检查
+    total_verified = 0
+    total_coord = 0
+    total_attr = 0
+    
+    try:
+        for idx, record in enumerate(records):
+            print(f"[{idx+1}/{len(records)}] {record.metadata.get('annotation_id', '')[:8]}...", end=" ")
+            errors, warnings, stats = checker.check(record)
+            
+            total_verified += stats['verified_actions']
+            total_coord += stats['coord_success']
+            total_attr += stats['attr_success']
+            
+            v = stats['verified_actions']
+            if v > 0:
+                print(f"坐标: {stats['coord_success']}/{v} ({stats['coord_rate']:.0%}) | "
+                      f"属性: {stats['attr_success']}/{v} ({stats['attr_rate']:.0%})")
+            else:
+                print("⚠ 无可验证动作")
+    finally:
+        checker._close_browser()
     
     # 打印汇总
     print()
     print("=" * 60)
     print("汇总结果")
     print("=" * 60)
-    print(f"测试记录数: {batch_stats['total_records']}")
-    print(f"可验证动作数: {batch_stats['total_verified']}")
-    print(f"坐标定位成功率: {batch_stats['total_coord_success']}/{batch_stats['total_verified']} "
-          f"({batch_stats['coord_rate']:.1%})")
-    print(f"属性定位成功率: {batch_stats['total_attr_success']}/{batch_stats['total_verified']} "
-          f"({batch_stats['attr_rate']:.1%})")
+    print(f"测试记录数: {len(records)}")
+    print(f"可验证动作数: {total_verified}")
+    coord_rate = total_coord / total_verified if total_verified > 0 else 0.0
+    attr_rate = total_attr / total_verified if total_verified > 0 else 0.0
+    print(f"坐标定位成功率: {total_coord}/{total_verified} ({coord_rate:.1%})")
+    print(f"属性定位成功率: {total_attr}/{total_verified} ({attr_rate:.1%})")
 
 
 if __name__ == '__main__':

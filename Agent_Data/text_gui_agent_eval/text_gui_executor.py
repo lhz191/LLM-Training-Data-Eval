@@ -65,11 +65,51 @@ class StaticExecutabilityChecker(ABC):
         pass
 
 
+class DynamicExecutabilityChecker(ABC):
+    """
+    动态可执行性检查器基类
+    
+    用于在真实网站上执行 Record 中的 action 序列，验证是否可以成功执行。
+    每个数据集实现自己的 check 方法。
+    
+    与静态检查的区别：
+    - 静态检查：在 MHTML/HTML 快照上验证元素是否存在
+    - 动态检查：在真实网站上实际执行操作（click, type 等）
+    
+    注意事项：
+    - 网站可能已变化，数据集记录的操作可能失效
+    - 需要处理登录、验证码、弹窗等干扰
+    - 操作会产生真实副作用
+    """
+    
+    @abstractmethod
+    def check(self, record: Record) -> Tuple[List[str], List[str], Dict[str, Any]]:
+        """
+        在真实网站上执行 Record 的 action 序列
+        
+        Args:
+            record: GUI Agent Record（包含 actions 列表）
+            
+        Returns:
+            (errors, warnings, stats) 元组
+            - errors: 错误列表（执行失败）
+            - warnings: 警告列表（部分成功或需要注意）
+            - stats: 统计信息，包含：
+                - total_actions: 总 action 数
+                - executed_actions: 成功执行的 action 数
+                - failed_actions: 执行失败的 action 数
+                - execution_rate: 执行成功率
+                - action_results: 每个 action 的执行结果
+        """
+        pass
+
+
 # =============================================================================
 # 注册表
 # =============================================================================
 
 STATIC_CHECKERS = {}
+DYNAMIC_CHECKERS = {}
 
 
 # =============================================================================
@@ -79,6 +119,11 @@ STATIC_CHECKERS = {}
 def register_static_checker(name: str, checker_class: type):
     """注册静态可执行性检查器"""
     STATIC_CHECKERS[name.lower()] = checker_class
+
+
+def register_dynamic_checker(name: str, checker_class: type):
+    """注册动态可执行性检查器"""
+    DYNAMIC_CHECKERS[name.lower()] = checker_class
 
 
 # =============================================================================
@@ -107,6 +152,28 @@ def get_static_checker(dataset_name: str, **kwargs) -> StaticExecutabilityChecke
     return STATIC_CHECKERS[name_lower](**kwargs)
 
 
+def get_dynamic_checker(dataset_name: str, **kwargs) -> DynamicExecutabilityChecker:
+    """
+    获取指定数据集的动态可执行性检查器
+    
+    Args:
+        dataset_name: 数据集名称 (mind2web, webshop, weblinx)
+        **kwargs: 传递给检查器的额外参数
+                  - headless: 是否使用无头浏览器模式
+                  - timeout: 页面加载超时时间
+        
+    Returns:
+        动态可执行性检查器实例
+    """
+    name_lower = dataset_name.lower().replace('_', '-').replace(' ', '')
+    
+    if name_lower not in DYNAMIC_CHECKERS:
+        available = list(DYNAMIC_CHECKERS.keys())
+        raise ValueError(f"Unknown dataset: {dataset_name}. Available: {available}")
+    
+    return DYNAMIC_CHECKERS[name_lower](**kwargs)
+
+
 # =============================================================================
 # 列出可用检查器
 # =============================================================================
@@ -114,6 +181,11 @@ def get_static_checker(dataset_name: str, **kwargs) -> StaticExecutabilityChecke
 def list_static_checkers() -> List[str]:
     """列出所有可用的静态可执行性检查器"""
     return list(STATIC_CHECKERS.keys())
+
+
+def list_dynamic_checkers() -> List[str]:
+    """列出所有可用的动态可执行性检查器"""
+    return list(DYNAMIC_CHECKERS.keys())
 
 
 # =============================================================================

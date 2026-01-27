@@ -1,0 +1,819 @@
+# Web/GUI Agent 数据集与方法总览
+# 更新日期: 2026-01-23
+
+================================================================================
+【一、Text-based Agent（基于 HTML/AxTree）】
+================================================================================
+
+1. Mind2Web (2023, OSU)
+   - 类型: 训练 + 评估
+   - 输入: Clean HTML
+   - 输出: 元素ID + 动作
+   - 规模: 2350 任务, 137 网站, 31 领域
+   - 特点: 有 GT 轨迹, 静态快照, 不可交互
+   - 开源: ✅ 全开源 (代码 + 数据)
+   - 链接: https://osu-nlp-group.github.io/Mind2Web/
+
+2. WebShop (2022, Princeton)
+   - 类型: 训练 + 评估
+   - 输入: 简化 HTML
+   - 输出: 动作
+   - 规模: ~1k 任务, ~12k 商品
+   - 特点: 电商模拟环境, 有 GT 轨迹, 可交互, Reward Model 评估
+   - 开源: ✅ 全开源 (代码 + 数据 + 环境)
+   - 链接: https://webshop-pnlp.github.io/
+
+3. WebArena (2024, CMU)
+   - 类型: 纯评估
+   - 输入: HTML / AxTree
+   - 输出: 动作
+   - 规模: 812 任务, 4 个网站克隆 (Shopping, Reddit, GitLab, CMS)
+   - 特点: 无 GT, 可交互, 功能正确性评估, Docker 环境
+   - 开源: ✅ 环境开源 (无 GT 轨迹)
+   - 链接: https://webarena.dev/
+
+4. AutoWebGLM (2024, THU/Zhipu)
+   - 类型: 方法
+   - 输入: HTML (剪枝后) + 截图
+   - 输出: 元素ID + 动作
+   - 基座: ChatGLM-3-6B
+   - 训练: IL + Rejection Sampling + RL
+   - 开源: ⚠️ 部分开源 (代码 ✅, 训练数据 ❌)
+   - 链接: https://github.com/THUDM/AutoWebGLM
+
+5. MindAct (2023, OSU)
+   - 类型: 方法 (Mind2Web 的 baseline)
+   - 输入: Clean HTML
+   - 输出: 元素ID + 动作
+   - 特点: 两阶段 (小模型过滤 + LLM 决策)
+   - 开源: ✅ 开源
+
+6. AgentTrek (2024)
+   - 类型: 数据生成 + 训练
+   - 输入: HTML + AxTree + 截图 + 视频
+   - 输出: 动作 + 推理链
+   - 规模: 10398 轨迹, 127 网站, 平均 12.1 步
+   - 特点: 有完整 Reasoning, 基于 Web 教程生成, $0.55/轨迹
+   - 开源: ✅ 全开源 (代码 + 数据)
+   - 链接: https://agenttrek.github.io/
+
+7. WebChoreArena (2025, 东京大学)
+   - 类型: 纯评估
+   - 输入: HTML / AxTree
+   - 输出: 动作
+   - 规模: 532 任务
+   - 特点: 更难版 WebArena (海量记忆/计算/长期记忆/特殊操作)
+   - 开源: ✅ 环境开源
+
+8. EconWebArena (2025)
+   - 类型: 纯评估
+   - 输入: HTML
+   - 输出: 动作 + 答案
+   - 规模: 360 任务, 82 个权威经济网站
+   - 特点: 经济领域专用, 数值正确性 + 来源验证
+   - 开源: ✅ 开源
+
+================================================================================
+【二、Vision-based Agent（基于截图）】
+================================================================================
+
+1. ScreenAgent (2024, 吉林大学)
+   - 类型: 方法 + 数据
+   - 输入: 截图
+   - 输出: 坐标 + 动作 + 推理链
+   - 规模: 203 任务
+   - 特点: 桌面 OS 级别, VNC 控制, 计划-执行-反思流程, 有 Reasoning
+   - 基座: CogAgent
+   - 开源: ✅ 全开源 (代码 + 数据 + 模型)
+   - 链接: https://github.com/niuzaisheng/ScreenAgent
+
+2. AGUVIS (2024)
+   - 类型: 方法 + 数据
+   - 输入: 截图
+   - 输出: 坐标 + 动作
+   - 特点: 纯视觉, 跨平台 (Web/Desktop/Mobile), 两阶段训练 (Grounding + Planning)
+   - 数据: aguvis-stage1, aguvis-stage2
+   - 开源: ✅ 全开源 (代码 + 数据 + 模型)
+
+3. GUIAct (GUICourse 的一部分)
+   - 类型: 数据集
+   - 输入: 截图
+   - 输出: 坐标 + 动作
+   - 规模: 2482 样本
+   - 特点: 无 Reasoning
+   - 开源: ✅ 开源
+
+4. GUICourse (2024)
+   - 类型: 数据 + 方法
+   - 输入: 截图
+   - 输出: 坐标 + 动作
+   - 特点: 三阶段 (GUIEnv + GUIAct + GUIChat), 解决 VLM 的 OCR/Grounding 问题
+   - 开源: ✅ 开源
+
+5. VisualWebArena (2024, CMU)
+   - 类型: 纯评估
+   - 输入: 截图
+   - 输出: 动作
+   - 规模: 910 任务
+   - 特点: WebArena 的多模态版本, 需理解图像内容
+   - 开源: ✅ 环境开源
+
+6. MM-Mind2Web
+   - 类型: 数据集
+   - 输入: 截图 + HTML
+   - 输出: 元素ID + 动作
+   - 规模: 1009 样本
+   - 特点: Mind2Web 的多模态版本, 有匹配截图
+   - 开源: ✅ 开源
+
+7. OSWorld (2024)
+   - 类型: 纯评估
+   - 输入: 截图
+   - 输出: 动作
+   - 规模: 369 任务
+   - 特点: 操作系统级 (Ubuntu/Windows/macOS), 真实 VM 环境
+   - 开源: ✅ 环境开源
+
+8. Rico (2017)
+   - 类型: 数据集
+   - 输入: 截图
+   - 输出: UI 元素标注
+   - 特点: Android UI 数据集, 用于视觉定位训练
+   - 开源: ✅ 开源
+   - 链接: http://www.interactionmining.org/rico.html
+
+9. WebGym (2025, Microsoft + UIUC + CMU) ⭐ 新增
+   - 类型: RL 训练环境（目前最大规模！）
+   - 输入: 截图
+   - 输出: 动作
+   - 规模: ~300,000 任务, 127,645 个真实网站
+   - 特点: 
+     • 专门用于 RL 训练（不是评估 benchmark）
+     • 聚合了 10 个数据集（Mind2Web-Live, PAE-WebVoyager, InSTA 等）
+     • 有难度标注（Easy/Medium/Hard）
+     • 高吞吐异步 rollout 系统（4-5x 加速）
+     • 8B 模型 RL 训练后超越 GPT-4o 和 GPT-5
+   - 训练效果: Qwen3-VL-8B 从 26.2% → 42.9%（OOD 测试集）
+   - 开源: ✅ 开源(待补充）
+   - 链接: (待补充)
+
+================================================================================
+【三、混合型（Text + Vision）】
+================================================================================
+
+1. AutoWebGLM
+   - 同时使用 HTML 和截图, 但主要依赖 HTML
+
+2. AgentTrek
+   - 最全面: HTML / AxTree / 截图 / 视频 都有
+   - 支持多种输入模式
+
+3. WebLINX
+   - 类型: 数据集
+   - 输入: HTML + 截图
+   - 输出: 动作
+   - 规模: 969 样本, 155 网站
+   - 特点: 无 Reasoning
+   - 开源: ✅ 开源
+
+================================================================================
+【四、按用途分类】
+================================================================================
+
+## 可用于训练的数据集（有 GT 轨迹）
+
+| 数据集        | 类型   | GT轨迹 | Reasoning | 规模   | 开源 | 推荐度 |
+|--------------|--------|--------|-----------|--------|------|--------|
+| Mind2Web     | Text   | ✅     | ❌        | 2350   | ✅   | ⭐⭐⭐  |
+| WebShop      | Text   | ✅     | ❌        | ~1k    | ✅   | ⭐⭐    |
+| AgentTrek    | 混合   | ✅     | ✅        | 10398  | ✅   | ⭐⭐⭐⭐ |
+| ScreenAgent  | Vision | ✅     | ✅        | 203    | ✅   | ⭐⭐    |
+| AGUVIS       | Vision | ✅     | ❌        | 大规模  | ✅   | ⭐⭐⭐⭐ |
+| GUICourse    | Vision | ✅     | ❌        | 多阶段  | ✅   | ⭐⭐⭐  |
+| WebLINX      | 混合   | ✅     | ❌        | 969    | ✅   | ⭐⭐    |
+| MM-Mind2Web  | Vision | ✅     | ❌        | 1009   | ✅   | ⭐⭐    |
+
+## 纯评估基准（无 GT，功能正确性）
+
+| 数据集           | 类型   | 任务数 | 特点               | 开源 |
+|-----------------|--------|--------|-------------------|------|
+| WebArena        | Text   | 812    | 通用 Web 任务      | ✅   |
+| VisualWebArena  | Vision | 910    | 需理解图像         | ✅   |
+| WebChoreArena   | Text   | 532    | 更难 (记忆/计算)   | ✅   |
+| EconWebArena    | Text   | 360    | 经济领域专用       | ✅   |
+| OSWorld         | Vision | 369    | 操作系统级         | ✅   |
+
+================================================================================
+【五、评估指标差异】
+================================================================================
+
+## Text-based Agent 核心指标
+
+1. Element Accuracy  - 预测的元素 ID 是否正确
+2. Action F1         - 动作类型和参数是否匹配
+3. Step Success Rate - 单步成功率
+4. Trajectory Match  - 整条轨迹是否匹配（用于训练数据）
+
+## Vision-based Agent 核心指标
+
+1. Coordinate Accuracy - 预测坐标与 GT 坐标的距离/IoU
+   - 欧氏距离: ||pred - gt|| < threshold
+   - 点击在目标元素内: IoU > 0
+2. Grounding Accuracy  - 视觉定位准确率（能否找到目标元素）
+3. Action Type Match   - 动作类型是否正确
+4. Reasoning Quality   - 推理链质量（仅限有 Reasoning 的数据集）
+   - 逻辑连贯性
+   - 与动作的一致性
+
+## 共同指标
+
+- Diversity（多样性）
+- Format Check（格式检查）
+- Task Completion（任务完成率，需要环境交互）
+
+================================================================================
+【六、Eval 框架设计建议】
+================================================================================
+
+Agent_Data/
+├── text_agent_eval/          # Text-based Agent 评估
+│   ├── datasets/
+│   │   ├── mind2web_loader.py
+│   │   ├── webshop_loader.py
+│   │   └── agenttrek_loader.py   # AgentTrek 的 HTML/AxTree 部分
+│   ├── metrics/
+│   │   ├── element_accuracy.py   # 元素选择准确率
+│   │   ├── action_f1.py          # 动作匹配 F1
+│   │   ├── step_success.py       # 步骤成功率
+│   │   └── trajectory_match.py   # 轨迹匹配
+│   └── evaluator.py
+│
+└── vision_agent_eval/        # Vision-based Agent 评估
+    ├── datasets/
+    │   ├── screenagent_loader.py
+    │   ├── aguvis_loader.py
+    │   ├── guicourse_loader.py
+    │   └── agenttrek_loader.py   # AgentTrek 的截图/视频部分
+    ├── metrics/
+    │   ├── coordinate_accuracy.py  # 坐标准确率（IoU/距离）
+    │   ├── action_match.py         # 动作类型匹配
+    │   ├── grounding_accuracy.py   # 视觉定位准确率
+    │   └── reasoning_quality.py    # 推理链质量
+    └── evaluator.py
+
+================================================================================
+【七、优先推荐】
+================================================================================
+
+| 用途           | 推荐数据集              | 原因                          |
+|---------------|------------------------|-------------------------------|
+| Text 训练      | Mind2Web               | 最大规模，广泛使用，有 GT      |
+| Text 评估      | WebArena               | 标准 benchmark，功能正确性     |
+| Vision 训练    | AGUVIS                 | 大规模，跨平台，全开源         |
+| Vision 评估    | VisualWebArena/OSWorld | 标准 benchmark                |
+| 带 Reasoning   | AgentTrek + ScreenAgent| 有完整推理链                  |
+| RL 训练        | WebGym                 | 最大规模 RL 环境，300k 任务    |
+
+================================================================================
+【八、WebGym 聚合的数据集详解】（2025 新增）
+================================================================================
+
+WebGym 论文聚合了 10 个已有数据集，构成 ~300k 任务的大规模 RL 训练环境：
+
+## 8.1 WebGym 数据来源表
+
+| 来源数据集         | 网站数    | 任务数    | 有难度标注 | 说明                          |
+|-------------------|----------|-----------|-----------|-------------------------------|
+| InSTA-v3          | 146,348  | 146,441   | ❌        | 最大贡献者，网页交互任务         |
+| PAE-WebVoyager    | 13       | 128,499   | ❌        | WebVoyager 的 PAE 扩展版        |
+| AgentSynth-Web    | 328      | 2,086     | ✅        | 合成生成的 Web 任务             |
+| BrowseComp        | 7        | 1,266     | ❌        | OpenAI 的浏览理解基准           |
+| TravelPlanner     | 1        | 1,225     | ❌        | 旅行规划任务                    |
+| Mind2Web-Live     | 76       | 542       | ❌        | Mind2Web 的在线版本             |
+| Online Mind2Web   | 139      | 300       | ❌        | Mind2Web 在线交互版             |
+| DeepShop          | 1        | 150       | ❌        | 深度电商任务                    |
+| Mind2Web-2        | 44       | 130       | ❌        | Mind2Web 第二版                 |
+| GAIA-Web          | 1        | 87        | ✅        | GAIA 的 Web 子集                |
+|-------------------|----------|-----------|-----------|-------------------------------|
+| **WebGym (合计)** | 127,645  | 292,092   | ✅        | 目前最大规模                    |
+
+## 8.2 各数据集详细信息
+
+### InSTA-v3
+- 类型: Vision-based 任务集
+- 规模: 146k+ 任务（最大贡献者）
+- 特点: 大规模网页交互任务
+- 开源: 待确认
+
+### PAE-WebVoyager  
+- 类型: Vision-based
+- 规模: 128k+ 任务
+- 特点: WebVoyager 的 PAE (Plan-Act-Execute) 扩展
+- 来源: 13 个网站
+- 开源: 待确认
+
+### AgentSynth-Web
+- 类型: 合成数据
+- 规模: 2,086 任务
+- 特点: 有难度标注，合成生成
+- 来源: 328 个网站
+- 开源: 待确认
+
+### BrowseComp (OpenAI)
+- 类型: 浏览理解基准
+- 规模: 1,266 任务
+- 特点: OpenAI 发布的浏览器理解能力测试
+- 来源: 7 个网站
+- 开源: 待确认
+
+### TravelPlanner
+- 类型: 领域特化
+- 规模: 1,225 任务
+- 特点: 专门用于旅行规划场景
+- 来源: 1 个网站（旅行平台）
+- 开源: 待确认
+
+### Mind2Web-Live / Online Mind2Web
+- 类型: Mind2Web 的在线版本
+- 规模: 542 + 300 = 842 任务
+- 特点: 从静态快照升级为在线交互
+- 开源: 待确认
+
+### DeepShop
+- 类型: 电商任务
+- 规模: 150 任务
+- 特点: 深度电商交互（复杂购物流程）
+- 来源: 1 个电商网站
+- 开源: 待确认
+
+### Mind2Web-2
+- 类型: Mind2Web 升级版
+- 规模: 130 任务
+- 特点: Mind2Web 的改进版本
+- 来源: 44 个网站
+- 开源: 待确认
+
+### GAIA-Web
+- 类型: GAIA 基准的 Web 子集
+- 规模: 87 任务
+- 特点: 有难度标注，来自 GAIA 综合基准
+- 开源: 待确认
+
+================================================================================
+【九、其他重要数据集补充】
+================================================================================
+
+## 9.1 GUI 元素定位专用
+
+### ScreenSpot 系列
+1. ScreenSpot (2024)
+   - 类型: 纯评估
+   - 输入: 截图
+   - 任务: GUI 元素定位
+   - 开源: ✅
+
+2. ScreenSpot-v2 (2024)
+   - 类型: 纯评估
+   - 特点: ScreenSpot 改进版
+   - 开源: ✅
+
+3. ScreenSpot-Pro (2025)
+   - 类型: 纯评估
+   - 特点: 更难的定位任务
+   - 开源: ✅
+
+### ScreenQA-Short
+- 类型: 纯评估
+- 任务: 截图理解问答
+- 开源: ✅
+
+## 9.2 移动端/Android
+
+### AndroidControl 系列
+1. AndroidControl-Low
+   - 类型: 纯评估
+   - 难度: 简单操作
+   - 开源: ✅
+
+2. AndroidControl-High
+   - 类型: 纯评估
+   - 难度: 复杂多步任务
+   - 开源: ✅
+
+## 9.3 通用 GUI Agent 方法
+
+### UI-TARS (2025, 字节跳动/清华)
+- 类型: 方法 + 数据
+- 输入: 截图
+- 输出: 坐标 + 动作
+- 特点: 
+  • 端到端原生 GUI Agent（无需外部 LLM）
+  • System-2 推理（任务分解、反思、恢复）
+  • 6600 万 GUI 教程数据
+  • 10+ 基准 SOTA
+- 开源: ✅ 模型开源
+
+### UIShift (2024, 北京邮电大学)
+- 类型: 方法
+- 特点: 
+  • 自监督强化学习
+  • k-步 UI 转换任务
+  • 无需大规模标注
+- 开源: ✅ 代码开源
+
+## 9.4 Grounding 预训练数据
+
+### OS-Atlas
+- 规模: 13M UI 元素
+- 用途: 视觉定位预训练
+- 开源: 待确认
+
+### Uground
+- 规模: 1.3M 截图
+- 用途: GUI Grounding 预训练
+- 开源: 待确认
+
+### MobileViews
+- 规模: 百万级未标注 GUI 轨迹
+- 用途: 自监督预训练
+- 开源: 待确认
+
+================================================================================
+【十、完整分类总表】
+================================================================================
+
+## 按平台分类
+
+### Web 浏览器
+| 数据集            | 类型   | 规模    | 用途      | 开源 |
+|------------------|--------|---------|----------|------|
+| Mind2Web         | Text   | 2350    | 训练     | ✅   |
+| WebShop          | Text   | ~1k     | 训练+评估 | ✅   |
+| WebArena         | Text   | 812     | 评估     | ✅   |
+| VisualWebArena   | Vision | 910     | 评估     | ✅   |
+| WebGym           | Vision | 300k    | RL 训练  | ✅   |
+| WebLINX          | 混合   | 969     | 训练     | ✅   |
+| WebChoreArena    | Text   | 532     | 评估     | ✅   |
+| EconWebArena     | Text   | 360     | 评估     | ✅   |
+| Mind2Web-Live    | Text   | 542     | 训练     | 待确认 |
+
+### 桌面操作系统
+| 数据集        | 类型   | 规模  | 用途      | 开源 |
+|--------------|--------|-------|----------|------|
+| OSWorld      | Vision | 369   | 评估     | ✅   |
+| ScreenAgent  | Vision | 203   | 训练+评估 | ✅   |
+| AGUVIS       | Vision | 大规模 | 训练     | ✅   |
+| GUICourse    | Vision | 多阶段 | 训练     | ✅   |
+| UI-TARS      | Vision | 超大规模| 训练     | ✅   |
+
+### 移动端/Android
+| 数据集              | 类型   | 规模  | 用途 | 开源 |
+|--------------------|--------|-------|------|------|
+| Rico               | Vision | 72k   | 预训练| ✅   |
+| AndroidControl-Low | Vision | -     | 评估 | ✅   |
+| AndroidControl-High| Vision | -     | 评估 | ✅   |
+
+### 元素定位专用
+| 数据集          | 类型   | 用途 | 开源 |
+|----------------|--------|------|------|
+| ScreenSpot     | Vision | 评估 | ✅   |
+| ScreenSpot-v2  | Vision | 评估 | ✅   |
+| ScreenSpot-Pro | Vision | 评估 | ✅   |
+| ScreenQA-Short | Vision | 评估 | ✅   |
+
+## 按训练方式分类
+
+### 静态数据集（SFT 训练）
+- Mind2Web, WebShop, ScreenAgent, AGUVIS, GUICourse, AgentTrek, WebLINX
+
+### RL 训练环境
+- WebGym（最大规模，300k 任务）
+- WebArena（也可用于 RL）
+
+### 评估基准
+- WebArena, VisualWebArena, OSWorld, WebChoreArena, EconWebArena
+- ScreenSpot 系列, AndroidControl 系列
+
+### 带 Reasoning 的数据集
+- AgentTrek（有完整推理链）
+- ScreenAgent（Plan-Act-Reflect）
+- UI-TARS（System-2 推理）
+
+================================================================================
+【十一、完整数据集开源状态 & 模态类型总表】
+================================================================================
+
+## 核心分类维度：开源状态 + Text/Vision
+
+### TEXT-BASED AGENT 数据集
+
+| 数据集名称      | 开源   | 模态 | 规模    | 用途     | 说明                    |
+|----------------|--------|------|---------|----------|-------------------------|
+| Mind2Web       | ✅ 开源 | Text | 2,350   | 训练     | 最大规模 Text 训练集     |
+| WebShop        | ✅ 开源 | Text | ~1k     | 训练+评估| 电商场景，HTML 输入      |
+| WebArena       | ✅ 开源 | Text | 812     | 评估     | 标准 benchmark           |
+| MindAct        | ✅ 开源 | Text | -       | 方法     | Mind2Web baseline        |
+| WebChoreArena  | ✅ 开源 | Text | 532     | 评估     | 更难版 WebArena          |
+| EconWebArena   | ✅ 开源 | Text | 360     | 评估     | 经济领域专用             |
+| WebLINX        | ✅ 开源 | Mix  | 100k    | 训练     | HTML + 截图，多轮对话     |
+
+### VISION-BASED AGENT 数据集
+
+| 数据集名称         | 开源   | 模态   | 规模    | 用途     | 说明                    |
+|-------------------|--------|--------|---------|----------|-------------------------|
+| ScreenAgent       | ✅ 开源 | Vision | 203     | 训练+评估| 有 Reasoning，桌面 OS   |
+| AGUVIS            | ✅ 开源 | Vision | 大规模  | 训练     | 跨平台，两阶段训练       |
+| GUIAct/GUICourse  | ✅ 开源 | Vision | -       | 训练     | OCR + Grounding 解决     |
+| VisualWebArena    | ✅ 开源 | Vision | 910     | 评估     | WebArena 视觉版          |
+| MM-Mind2Web       | ✅ 开源 | Vision | 1,009   | 训练     | Mind2Web 多模态版        |
+| OSWorld           | ✅ 开源 | Vision | 369     | 评估     | 跨平台 OS 任务           |
+| Rico              | ✅ 开源 | Vision | 72k     | 预训练   | Android UI 数据集        |
+| WebGym            | ✅ 开源 | Vision | ~300k   | RL 训练  | 最大规模 RL 环境         |
+| ScreenSpot        | ✅ 开源 | Vision | -       | 评估     | GUI 元素定位基准         |
+| ScreenSpot-v2     | ✅ 开源 | Vision | -       | 评估     | 定位基准改进版           |
+| ScreenSpot-Pro    | ✅ 开源 | Vision | -       | 评估     | 更难的定位任务           |
+| AndroidControl-Low| ✅ 开源 | Vision | -       | 评估     | 移动端简单任务           |
+| AndroidControl-High|✅ 开源 | Vision | -       | 评估     | 移动端复杂任务           |
+| OS-Atlas          | ✅ 开源 | Vision | 13M元素 | 预训练   | Grounding 预训练         |
+| Uground           | ✅ 开源 | Vision | 1.3M    | 预训练   | 视觉定位预训练           |
+| MobileViews       | ✅ 开源 | Vision | 百万级  | 预训练   | 移动端 GUI 轨迹          |
+| AITW              | ✅ 开源 | Vision | 6.9M    | 训练     | Android 操作任务         |
+| SeeClick          | ✅ 开源 | Vision | -       | 训练     | 点击定位数据集           |
+
+### 部分开源 / 未开源数据集
+
+| 数据集名称      | 开源状态 | 模态   | 规模    | 说明                      |
+|----------------|----------|--------|---------|---------------------------|
+| AutoWebGLM     | ⚠️ 部分  | Mix    | -       | 代码开源，训练数据未开源   |
+| UI-TARS        | ⚠️ 部分  | Vision | 6600万  | 模型开源，数据未开源       |
+| UIShift        | ✅ 开源  | Vision | -       | 自监督方法，代码开源       |
+| InSTA-v3       | ❓待确认 | Vision | 146k    | WebGym 最大贡献者          |
+| PAE-WebVoyager | ❓待确认 | Vision | 128k    | WebGym 数据源              |
+| AgentSynth-Web | ❓待确认 | Vision | 2,086   | 合成数据，有难度标注       |
+| BrowseComp     | ❓待确认 | Vision | 1,266   | OpenAI 浏览理解基准        |
+| TravelPlanner  | ❓待确认 | Vision | 1,225   | 旅行规划专用               |
+| DeepShop       | ❓待确认 | Vision | 150     | 深度电商任务               |
+
+### 混合型数据集
+
+| 数据集名称   | 开源   | 模态 | 规模    | 说明                        |
+|-------------|--------|------|---------|----------------------------|
+| AgentTrek   | ✅ 开源 | Mix  | 10,398  | HTML+AxTree+截图+视频+推理 |
+| AutoWebGLM  | ⚠️ 部分| Mix  | -       | HTML + 截图混合             |
+
+================================================================================
+【十二、按开源状态快速索引】
+================================================================================
+
+## ✅ 完全开源（可直接使用）
+
+### Text-based
+- Mind2Web, WebShop, WebArena, MindAct, WebChoreArena, EconWebArena, WebLINX
+
+### Vision-based  
+- ScreenAgent, AGUVIS, GUICourse, VisualWebArena, MM-Mind2Web, OSWorld
+- Rico, WebGym, ScreenSpot 系列, AndroidControl 系列
+- OS-Atlas, Uground, MobileViews, AITW, SeeClick
+
+### 混合型
+- AgentTrek
+
+## ⚠️ 部分开源（模型/代码开源，数据未开源）
+- AutoWebGLM（代码开源，训练数据未开源）
+- UI-TARS（模型开源，6600 万教程数据未开源）
+
+## ❓ 待确认（WebGym 聚合的数据源）
+- InSTA-v3, PAE-WebVoyager, AgentSynth-Web, BrowseComp
+- TravelPlanner, DeepShop, Mind2Web-Live, Mind2Web-2, GAIA-Web
+
+================================================================================
+【十三、Eval 框架数据集推荐】
+================================================================================
+
+## text_agent_eval 推荐数据集
+
+| 优先级 | 数据集       | 原因                          |
+|--------|-------------|-------------------------------|
+| ⭐⭐⭐⭐ | Mind2Web    | 最大规模，标准训练集           |
+| ⭐⭐⭐⭐ | WebArena    | 标准评估 benchmark             |
+| ⭐⭐⭐  | WebShop     | 电商场景，有 GT 轨迹           |
+| ⭐⭐    | WebLINX     | 大规模对话交互                 |
+| ⭐⭐    | WebChoreArena| 复杂任务评估                  |
+
+## vision_agent_eval 推荐数据集
+
+| 优先级 | 数据集          | 原因                          |
+|--------|----------------|-------------------------------|
+| ⭐⭐⭐⭐ | AGUVIS         | 最大开源训练集，两阶段         |
+| ⭐⭐⭐⭐ | WebGym         | 最大 RL 训练环境               |
+| ⭐⭐⭐⭐ | VisualWebArena | 标准评估 benchmark             |
+| ⭐⭐⭐⭐ | OSWorld        | 跨平台 OS 评估                 |
+| ⭐⭐⭐  | ScreenAgent    | 有 Reasoning，完整开源         |
+| ⭐⭐⭐  | ScreenSpot系列 | 元素定位专用评估               |
+| ⭐⭐    | AndroidControl | 移动端评估                     |
+
+## 带 Reasoning 数据集
+
+| 数据集       | 类型   | Reasoning 类型            |
+|-------------|--------|---------------------------|
+| AgentTrek   | 混合   | 中间推理链                 |
+| ScreenAgent | Vision | Plan-Act-Reflect 三阶段   |
+| UI-TARS     | Vision | System-2 推理（未开源）    |
+
+================================================================================
+【十四、数据集统计】
+================================================================================
+
+## 开源状态统计
+- ✅ 完全开源: 25+ 个
+- ⚠️ 部分开源: 2 个
+- ❓ 待确认: 9 个
+
+## 模态分布
+- Text-based: 7 个
+- Vision-based: 18+ 个
+- 混合型: 3 个
+
+## 规模分布
+- 超大规模 (1M+): UI-TARS(6600万,未开源), AITW(6.9M), OS-Atlas(13M元素)
+- 大规模 (100k+): WebGym(300k), AGUVIS, InSTA-v3(146k), PAE-WebVoyager(128k)
+- 中规模 (1k-100k): Mind2Web(2.3k), AgentTrek(10k), Rico(72k)
+- 小规模 (<1k): ScreenAgent(203), WebArena(812), OSWorld(369)
+
+================================================================================
+【十五、纯 Text-based 训练数据集详细补充】
+================================================================================
+
+## 核心发现：Text-based 训练数据集相对稀缺
+
+与 Vision-based 相比，纯 Text-based 的开源训练数据集数量较少，主要原因：
+1. 新研究趋势转向 Vision-based（更通用，跨平台）
+2. HTML 结构标注成本高
+3. 网页结构变化快，数据容易过时
+
+## 完整的 Text-based 训练数据集列表
+
+### 已确认开源的 Text-based 训练数据集
+
+| 数据集         | 规模      | 开源   | 输入格式        | 特点                    | GitHub/HuggingFace        |
+|---------------|----------|--------|----------------|------------------------|---------------------------|
+| Mind2Web      | 2,350    | ✅ 开源 | HTML + AxTree  | 最广泛使用，137网站31领域 | OSU-NLP-Group/Mind2Web    |
+| WebShop       | ~1,000   | ✅ 开源 | 简化 HTML      | 电商场景，有 Reward      | princeton-nlp/WebShop     |
+| WebLINX       | 100k+    | ✅ 开源 | HTML + 截图    | 最大规模，多轮对话 (Mixed)| McGill-NLP/weblinx        |
+| AgentTrek     | 10,398   | ✅ 开源 | HTML + AxTree  | 有 Reasoning 链          | yimingyao/AgentTrek       |
+| MiniWoB++     | 104 任务 | ✅ 开源 | 简化 DOM       | 基础任务，适合入门        | Farama-Foundation/miniwob |
+| RUSS          | 80 任务  | ✅ 开源 | HTML DOM       | 真实用户会话，高质量      | nicholaslocascio/russ     |
+
+### 部分开源 / 代码开源但数据需生成
+
+| 数据集         | 规模      | 状态     | 说明                              |
+|---------------|----------|----------|----------------------------------|
+| AutoWebGLM    | ~10k     | ⚠️ 部分  | 代码开源，训练数据需自己生成        |
+| WebArena Train| -        | ⚠️ 环境  | 提供环境，需自己收集训练数据        |
+
+### 可从环境自动生成的数据
+
+| 环境            | 类型   | 说明                                    |
+|----------------|--------|----------------------------------------|
+| WebShop 环境    | Text   | 可通过 RL 在线生成无限轨迹                |
+| MiniWoB++ 环境  | Text   | 104 个任务，可自动收集 DOM + Action      |
+| WebArena 环境   | Text   | Docker 克隆网站，可自己标注               |
+
+## Text-based vs Vision-based 规模对比
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                     训练数据规模对比                                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Text-based 最大规模:                                                         │
+│  ─────────────────────────────────────────────────────────────────────────── │
+│  • Mind2Web: 2,350 任务 (最大纯 Text 训练集)                                  │
+│  • AgentTrek: 10,398 步骤                                                    │
+│  • WebLINX: 100k+ 轨迹 (Mixed: HTML + 截图，多轮对话)                         │
+│                                                                              │
+│  Vision-based 最大规模:                                                       │
+│  ─────────────────────────────────────────────────────────────────────────── │
+│  • WebGym: ~300k 任务 (RL 环境)                                               │
+│  • UI-TARS: 6600 万教程 (未开源)                                              │
+│  • AITW: 6.9M 任务                                                           │
+│  • AGUVIS: 大规模（未公布具体数字）                                            │
+│                                                                              │
+│  结论：Vision-based 数据规模 >> Text-based                                    │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+## 获取更多 Text 训练数据的方法
+
+1. **从 Vision 数据集提取 HTML**
+   - WebGym、AGUVIS 等 Vision 数据集同时保存了 HTML/AxTree
+   - 可以只使用文本部分进行训练
+
+2. **环境自动生成**
+   - 在 WebShop/MiniWoB++ 中用 RL 探索生成轨迹
+   - 使用 GPT-4 作为 Teacher 生成高质量轨迹
+
+3. **LLM 合成数据**
+   - 参考 AutoWebGLM 的 DFSDT 方法
+   - 用 LLM 根据网页结构生成任务和轨迹
+
+4. **从教程/文档生成**
+   - 参考 AgentTrek 的方法
+   - 从 Web 教程中提取 HTML + 操作步骤
+
+## Text-based 训练数据推荐组合
+
+| 用途               | 推荐组合                              |
+|-------------------|--------------------------------------|
+| 基础 SFT          | Mind2Web + WebLINX                   |
+| 电商场景          | WebShop + 自动生成                    |
+| 带 Reasoning      | AgentTrek                             |
+| 小规模快速验证    | MiniWoB++                             |
+| 中文场景          | AutoWebGLM (需自己生成)               |
+
+## 总结
+
+- **纯 Text 训练数据确实较少**，最大的是 Mind2Web (2,350 任务)
+- **WebLINX (100k+)** 规模最大，但它是 **Mixed (HTML + 截图)**，不是纯 Text
+- 如需大规模训练，建议：
+  1. 纯 Text: Mind2Web + AgentTrek
+  2. Mixed: WebLINX (规模最大)
+  3. 用环境自动生成补充数据
+- Vision-based 数据规模远超 Text-based，这是领域趋势
+
+================================================================================
+【十六、WebLINX 详细信息】
+================================================================================
+
+## WebLINX: Real-World Website Navigation with Multi-Turn Dialogue
+
+### 基本信息
+- **来源**: McGill University (McGill-NLP)
+- **年份**: 2024
+- **链接**: https://mcgill-nlp.github.io/weblinx
+- **开源**: ✅ 代码 + 数据 + 模型 全部开源
+
+### 数据规模
+- **100K interactions** (交互)
+- **2,300 expert demonstrations** (专家演示)
+- **150+ real-world websites** (真实网站)
+
+### 输入模态 (Mixed!)
+- HTML 元素 (经过 retrieval-based ranking 筛选)
+- Screenshots (截图)
+- Action History (动作历史)
+→ **不是纯 Text，是 Text + Vision 混合型**
+
+### 任务特点
+- **Conversational** (对话式): 用户可多轮修正指令
+- **Real-World** (真实): 150+ 真实网站，非模拟
+- **Expert Demonstrations** (专家标注): 高质量轨迹
+
+### 关键技术贡献
+1. **HTML Pruning**: 提出 retrieval-inspired 的 HTML 元素筛选方法
+2. **Multi-Turn Dialogue**: 首个大规模对话式 Web 导航数据集
+3. **Comprehensive Evaluation**: 从小型 text-only 到 GPT-4V 的全面评估
+
+### 论文发现
+- 小模型 fine-tuned > 大模型 zero-shot (包括 GPT-4V)
+- 所有 fine-tuned 模型都难以泛化到未见网站
+- 需要能泛化的大型多模态模型
+
+### 与其他数据集对比
+
+| 维度          | Mind2Web     | WebLINX        | WebShop      |
+|--------------|--------------|----------------|--------------|
+| 规模          | 2,350 任务   | 100k 交互      | ~1k 任务     |
+| 对话轮次      | 单轮指令     | 多轮对话       | 单轮指令     |
+| 输入模态      | 纯 HTML      | HTML + 截图    | 简化 HTML    |
+| 标注方式      | 众包         | 专家演示       | 自动生成     |
+| 网站数量      | 137          | 150+           | 1 (电商)     |
+
+### 使用建议
+- 如果需要 **多轮对话** 训练数据 → 首选 WebLINX
+- 如果需要 **纯 Text** 训练数据 → 选择 Mind2Web
+- 如果需要 **大规模 RL** 数据 → 选择 WebGym (Vision-based)
+
+### 数据下载方式 (HuggingFace)
+```python
+from datasets import load_dataset
+
+# 训练、验证、测试集
+train = load_dataset("McGill-NLP/weblinx", split="train")
+val = load_dataset("McGill-NLP/weblinx", split="validation")
+test = load_dataset("McGill-NLP/weblinx", split="test")
+
+# 4 个 Out-of-Domain 测试集 (泛化评估)
+test_web = load_dataset("McGill-NLP/weblinx", split="test_web")
+test_vis = load_dataset("McGill-NLP/weblinx", split="test_vis")
+test_geo = load_dataset("McGill-NLP/weblinx", split="test_geo")
+test_cat = load_dataset("McGill-NLP/weblinx", split="test_cat")
+```
+
+### 官方工具库
+```bash
+pip install weblinx[all]
+```
+- 提供 HTML pruning、history formatting、instruction processing
+- 19 个 finetuned 模型在 HuggingFace Hub

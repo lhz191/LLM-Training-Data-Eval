@@ -1,0 +1,255 @@
+====================================================================================================
+轨迹文件: 20220427_1_12.jsonl
+步骤数: 6
+====================================================================================================
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+【Step 0】
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+page:
+  'index'
+
+url:
+  'http://3.83.245.205:3000/20220427_1_12'
+
+goal:
+  {
+    asin: 'B097MRL84T'
+    category: 'garden'
+    query: 'sofas and couches'
+    name: 'Nolany Modern Upholstered 3-Seat Sofa Couch w/Scrolled Arm and Nailhead Trim, Linen Fabric Deep Seat Sofa for Living Room, Bedroom, Office, Apartment, Small Space in Grey'
+    product_category: 'Home & Kitchen › Furniture › Living Room Furniture › Sofas & Couches'
+    instruction_text: "i'm looking for living room furniture and kitchen furniture and need to buy it, and price lower than 490.00 dollars"
+    attributes: [
+      [0] 'wood frame'
+      [1] 'living room'
+    ]
+    price_upper: 490.0
+    goal_options: [
+      [0] 'grey'
+    ]
+    weight: 1
+  }
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+【Step 1】
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+page:
+  'search_results'
+
+url:
+  'http://3.83.245.205:3000/search_results/20220427_1_12/%5B%27living%27%2C%20%27room%27%2C%20%27furniture%27%5D/1'
+
+goal:
+  {
+    asin: 'B097MRL84T'
+    category: 'garden'
+    query: 'sofas and couches'
+    name: 'Nolany Modern Upholstered 3-Seat Sofa Couch w/Scrolled Arm and Nailhead Trim, Linen Fabric Deep Seat Sofa for Living Room, Bedroom, Office, Apartment, Small Space in Grey'
+    product_category: 'Home & Kitchen › Furniture › Living Room Furniture › Sofas & Couches'
+    instruction_text: "i'm looking for living room furniture and kitchen furniture and need to buy it, and price lower than 490.00 dollars"
+    attributes: [
+      [0] 'wood frame'
+      [1] 'living room'
+    ]
+    price_upper: 490.0
+    goal_options: [
+      [0] 'grey'
+    ]
+    weight: 1
+  }
+
+content:
+  {
+    keywords: [
+      [0] 'living'
+      [1] 'room'
+      [2] 'furniture'
+    ]
+    search_result_asins: [
+      [0] 'B09G71YGSV'
+      [1] 'B00UNYEOVE'
+      [2] 'B07194KS6G'
+      [3] 'B087SPBGGG'
+      [4] 'B09JKVQTDL'
+      [5] 'B09JKWRKHT'
+      [6] 'B09JKX56KW'
+      [7] 'B098NY1RWG'
+      [8] 'B07194QYTG'
+      [9] 'B098NXS2TR'
+    ]
+    page: 1
+  }
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+【Step 2】
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+page:
+  'index'
+
+url:
+  'http://3.83.245.205:3000/20220427_1_12'
+
+goal:
+  {
+    asin: 'B097MRL84T'
+    category: 'garden'
+    query: 'sofas and couches'
+    name: 'Nolany Modern Upholstered 3-Seat Sofa Couch w/Scrolled Arm and Nailhead Trim, Linen Fabric Deep Seat Sofa for Living Room, Bedroom, Office, Apartment, Small Space in Grey'
+    product_category: 'Home & Kitchen › Furniture › Living Room Furniture › Sofas & Couches'
+    instruction_text: "i'm looking for living room furniture and kitchen furniture and need to buy it, and price lower than 490.00 dollars"
+    attributes: [
+      [0] 'wood frame'
+      [1] 'living room'
+    ]
+    price_upper: 490.0
+    goal_options: [
+      [0] 'grey'
+    ]
+    weight: 1
+  }
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+【Step 3】
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+page:
+  'search_results'
+
+url:
+  'http://3.83.245.205:3000/search_results/20220427_1_12/%5B%27living%27%2C%20%27room%27%2C%20%27and%27%2C%20%27kitchen%27%2C%20%27furniture%27%5D/1'
+
+goal:
+  {
+    asin: 'B097MRL84T'
+    category: 'garden'
+    query: 'sofas and couches'
+    name: 'Nolany Modern Upholstered 3-Seat Sofa Couch w/Scrolled Arm and Nailhead Trim, Linen Fabric Deep Seat Sofa for Living Room, Bedroom, Office, Apartment, Small Space in Grey'
+    product_category: 'Home & Kitchen › Furniture › Living Room Furniture › Sofas & Couches'
+    instruction_text: "i'm looking for living room furniture and kitchen furniture and need to buy it, and price lower than 490.00 dollars"
+    attributes: [
+      [0] 'wood frame'
+      [1] 'living room'
+    ]
+    price_upper: 490.0
+    goal_options: [
+      [0] 'grey'
+    ]
+    weight: 1
+  }
+
+content:
+  {
+    keywords: [
+      [0] 'living'
+      [1] 'room'
+      [2] 'and'
+      [3] 'kitchen'
+      [4] 'furniture'
+    ]
+    search_result_asins: [
+      [0] 'B09LYLKLVX'
+      [1] 'B09LYLZWH9'
+      [2] 'B08PYBB2XF'
+      [3] 'B09KH3335J'
+      [4] 'B08MZHM78Q'
+      [5] 'B08JSQCJHN'
+      [6] 'B09H7BZ629'
+      [7] 'B08YJVNX5C'
+      [8] 'B094R1QJ6W'
+      [9] 'B09HGXLRY9'
+    ]
+    page: 1
+  }
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+【Step 4】
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+page:
+  'item_page'
+
+url:
+  'http://3.83.245.205:3000/item_page/20220427_1_12/B09LYLKLVX/%5B%27living%27%2C%20%27room%27%2C%20%27and%27%2C%20%27kitchen%27%2C%20%27furniture%27%5D/1/%7B%7D'
+
+goal:
+  {
+    asin: 'B097MRL84T'
+    category: 'garden'
+    query: 'sofas and couches'
+    name: 'Nolany Modern Upholstered 3-Seat Sofa Couch w/Scrolled Arm and Nailhead Trim, Linen Fabric Deep Seat Sofa for Living Room, Bedroom, Office, Apartment, Small Space in Grey'
+    product_category: 'Home & Kitchen › Furniture › Living Room Furniture › Sofas & Couches'
+    instruction_text: "i'm looking for living room furniture and kitchen furniture and need to buy it, and price lower than 490.00 dollars"
+    attributes: [
+      [0] 'wood frame'
+      [1] 'living room'
+    ]
+    price_upper: 490.0
+    goal_options: [
+      [0] 'grey'
+    ]
+    weight: 1
+  }
+
+content:
+  {
+    keywords: "['living', 'room', 'and', 'kitchen', 'furniture']"
+    page: '1'
+    asin: 'B09LYLKLVX'
+    options: {}
+  }
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+【Step 5】
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+page:
+  'done'
+
+url:
+  'http://3.83.245.205:3000/done/20220427_1_12/B09LYLKLVX/%7B%7D'
+
+goal:
+  {
+    asin: 'B097MRL84T'
+    category: 'garden'
+    query: 'sofas and couches'
+    name: 'Nolany Modern Upholstered 3-Seat Sofa Couch w/Scrolled Arm and Nailhead Trim, Linen Fabric Deep Seat Sofa for Living Room, Bedroom, Office, Apartment, Small Space in Grey'
+    product_category: 'Home & Kitchen › Furniture › Living Room Furniture › Sofas & Couches'
+    instruction_text: "i'm looking for living room furniture and kitchen furniture and need to buy it, and price lower than 490.00 dollars"
+    attributes: [
+      [0] 'wood frame'
+      [1] 'living room'
+    ]
+    price_upper: 490.0
+    goal_options: [
+      [0] 'grey'
+    ]
+    weight: 1
+  }
+
+content:
+  {
+    asin: 'B09LYLKLVX'
+    options: {}
+    price: 129.99
+  }
+
+reward:
+  0.5
+
+reward_info:
+  {
+    r_type: 1.0
+    r_att: 0.5
+    query_match: False
+    category_match: True
+    title_score: 0.125
+    r_option: 0.0
+    r_price: True
+  }
+
+====================================================================================================

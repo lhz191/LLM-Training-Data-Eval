@@ -30,11 +30,19 @@ DATASETS = {
         'name': 'Mind2Web',
         'data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/Mind2Web/data',
         'raw_dump_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/Mind2Web/raw_dump',
+        'has_dynamic': True,  # 支持动态可执行性（真实网站）
+    },
+    'webshop': {
+        'name': 'WebShop',
+        'data_path': os.path.join(os.path.dirname(os.path.dirname(__file__)), 'webshop/baseline_models/data/il_trajs_finalized_images.jsonl'),
+        'use_browser': False,  # 默认使用 Text 环境
+        'has_dynamic': False,  # 仿真环境，不支持动态可执行性
     },
     # 'weblinx': {
     #     'name': 'WebLINX',
     #     'data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/weblinx/chat_data',
     #     'raw_data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/weblinx/raw_data',
+    #     'has_dynamic': True,
     # },
 }
 
@@ -97,6 +105,21 @@ def run_static_executability(
             headless=not show_browser,
         )
         
+    elif dataset_key == 'webshop':
+        from loaders import WebShopLoader
+        from webshop_executor import WebShopStaticChecker
+        
+        # 加载数据
+        loader = WebShopLoader(config['data_path'])
+        
+        # 创建检查器
+        # use_browser: 默认从配置读取，--show 覆盖为 True
+        use_browser = show_browser or config.get('use_browser', False)
+        checker = WebShopStaticChecker(
+            use_browser=use_browser,
+            render=use_browser,
+        )
+        
     elif dataset_key == 'weblinx':
         # TODO: WebLINX checker 还未实现
         raise NotImplementedError("WebLINX static checker not implemented yet")
@@ -140,6 +163,13 @@ def run_dynamic_executability(
         return
     
     config = DATASETS[dataset_key]
+    
+    # 检查是否支持动态可执行性
+    if not config.get('has_dynamic', False):
+        print(f"\n⚠ {config['name']} 不支持 dynamic executability")
+        print(f"  请使用 static_executability 指标")
+        return None
+    
     module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     # 输出目录

@@ -246,7 +246,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="静态可执行性指标评估")
     parser.add_argument("--dataset", type=str, required=True, 
-                        choices=["mind2web", "weblinx"],
+                        choices=["mind2web", "webshop", "weblinx"],
                         help="数据集名称")
     parser.add_argument("--data-path", type=str, default=None,
                         help="数据集路径")
@@ -277,6 +277,19 @@ if __name__ == "__main__":
             headless=not args.show,
         )
         dataset_name = "Mind2Web"
+        
+    elif args.dataset == "webshop":
+        from loaders import WebShopLoader
+        from webshop_executor import WebShopStaticChecker
+        
+        data_path = args.data_path or os.path.join(os.path.dirname(os.path.dirname(__file__)), 'webshop/baseline_models/data/il_trajs_finalized_images.jsonl')
+        loader = WebShopLoader(data_path)
+        
+        checker = WebShopStaticChecker(
+            use_browser=args.show,  # --show 表示使用 browser 模式
+            render=args.show,
+        )
+        dataset_name = "WebShop"
         
     elif args.dataset == "weblinx":
         # TODO: WebLINX checker 还未实现

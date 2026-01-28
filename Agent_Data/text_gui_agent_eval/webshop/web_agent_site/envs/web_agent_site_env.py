@@ -100,9 +100,22 @@ class WebAgentSiteEnv(gym.Env):
                 except ElementNotInteractableException:
                     # Perform force click with JavaScript
                     self.browser.execute_script("arguments[0].click();", clickable)
-                reward = self.get_reward()
+                
+                # 等待页面加载完成（特别是点击 buy now 后跳转到 done 页面）
                 if action_arg.lower() == END_BUTTON.lower():
                     done = True
+                    # 等待 done 页面加载，检测 reward 元素出现
+                    from selenium.webdriver.support.ui import WebDriverWait
+                    from selenium.webdriver.support import expected_conditions as EC
+                    from selenium.webdriver.common.by import By as SeleniumBy
+                    try:
+                        WebDriverWait(self.browser, 10).until(
+                            EC.presence_of_element_located((SeleniumBy.ID, 'reward'))
+                        )
+                    except Exception:
+                        pass  # 超时也继续，用默认 reward=0
+                
+                reward = self.get_reward()
         elif action_name == 'end':
             done = True
         else:

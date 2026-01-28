@@ -8,7 +8,10 @@ BASE_DIR = dirname(abspath(__file__))
 DEBUG_PROD_SIZE = None  # set to `None` to disable
 
 # 完整数据集路径（约12万产品）
-FULL_DATA_DIR = '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/webshop'
+# 本机路径
+FULL_DATA_DIR = '/home/liuhaoze/Desktop/mind2web/WebShop/data'
+# 远程路径（集群）
+# FULL_DATA_DIR = '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/webshop'
 DEFAULT_ATTR_PATH = join(FULL_DATA_DIR, 'items_ins_v2.json')
 DEFAULT_FILE_PATH = join(FULL_DATA_DIR, 'items_shuffle.json')
 DEFAULT_REVIEW_PATH = join(BASE_DIR, '../baseline_models/data/reviews.json')

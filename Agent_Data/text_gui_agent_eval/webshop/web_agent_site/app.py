@@ -1,4 +1,4 @@
-import argparse, json, logging, random
+import argparse, json, logging, random, re
 from pathlib import Path
 from ast import literal_eval
 
@@ -61,12 +61,53 @@ def index(session_id):
                 num_products=DEBUG_PROD_SIZE
             )
         search_engine = init_search_engine(num_products=DEBUG_PROD_SIZE)
+        # ★ 在 get_goals() 之前设置 seed，确保价格生成一致
+        random.seed(233)
         goals = get_goals(all_products, product_prices)
+        # 重新设置 seed 确保 shuffle 顺序一致
         random.seed(233)
         random.shuffle(goals)
         weights = [goal['weight'] for goal in goals]
 
-    if session_id not in user_sessions and 'fixed' in session_id:
+    # 支持 custom_<idx>_<price> 格式，使用自定义价格
+    custom_match = re.match(r'custom_(\d+)_([\d.]+)', session_id)
+    if session_id not in user_sessions and custom_match:
+        goal_idx = int(custom_match.group(1))
+        custom_price = custom_match.group(2)
+        
+        # ========== 调试日志 ==========
+        print(f"\n{'='*60}")
+        print(f"[DEBUG] 收到 custom session: {session_id}")
+        print(f"[DEBUG] 解析结果: goal_idx={goal_idx}, 要求价格={custom_price}")
+        
+        # 原始值
+        original_goal = goals[goal_idx]
+        print(f"[DEBUG] 原始 instruction: {original_goal['instruction_text']}")
+        print(f"[DEBUG] 原始 price_upper: {original_goal.get('price_upper', 'N/A')}")
+        
+        # 复制并修改
+        goal = goals[goal_idx].copy()
+        instruction = goal['instruction_text']
+        instruction = re.sub(
+            r'price lower than [\d.]+ dollars',
+            f'price lower than {custom_price} dollars',
+            instruction
+        )
+        goal['instruction_text'] = instruction
+        goal['price_upper'] = float(custom_price)
+        
+        # 修改后的值
+        print(f"[DEBUG] 修改后 instruction: {goal['instruction_text']}")
+        print(f"[DEBUG] 修改后 price_upper: {goal['price_upper']}")
+        print(f"[DEBUG] 替换成功: {custom_price in goal['instruction_text']}")
+        print(f"{'='*60}\n")
+        # ========== 调试日志结束 ==========
+        
+        instruction_text = instruction
+        user_sessions[session_id] = {'goal': goal, 'done': False}
+        if user_log_dir is not None:
+            setup_logger(session_id, user_log_dir)
+    elif session_id not in user_sessions and 'fixed' in session_id:
         goal_dix = int(session_id.split('_')[-1])
         goal = goals[goal_dix]
         instruction_text = goal['instruction_text']

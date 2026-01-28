@@ -3,9 +3,9 @@
 """
 Static Executability 指标 - GUI Agent 静态可执行性检查
 
-基于 MHTML/HTML 快照检查 GUI Agent 数据集样本的可执行性：
-- 坐标定位成功率：使用 bounding_box 坐标能否定位到目标元素
-- 属性定位成功率：使用 tag/class/id 等属性能否定位到目标元素
+通用框架，支持不同数据集的静态可执行性检查：
+- 通用指标：total_records, total_actions, errors, warnings
+- 数据集特有指标：由各 checker 返回，自动合并到结果中
 
 使用方式:
     from metrics import compute_static_executability
@@ -57,9 +57,8 @@ def compute_static_executability(
     
     Returns:
         结果字典，包含：
-        - coord_rate: 坐标定位成功率
-        - attr_rate: 属性定位成功率
-        - 详细的 record 和 action 级别结果
+        - 通用指标：total_records, total_actions, errors, warnings
+        - 数据集特有指标：由 checker 返回，自动累加
     """
     print("=" * 70)
     print("Static Executability Evaluation")
@@ -70,16 +69,18 @@ def compute_static_executability(
     
     start_time = time.time()
     
-    # Record 级别统计
+    # =========================================================================
+    # 通用统计（所有数据集共有）
+    # =========================================================================
     total_records = 0
     records_with_errors = 0
     records_with_warnings = 0
-    
-    # Action 级别统计
     total_actions = 0
-    verified_actions = 0  # 有 MHTML 可验证的
-    coord_success = 0
-    attr_success = 0
+    
+    # =========================================================================
+    # 数据集特有统计（从 checker 返回的 stats 中累加数值类型字段）
+    # =========================================================================
+    dataset_specific_stats = {}  # 累加的数值统计
     
     # 详细结果
     record_results = []
@@ -91,7 +92,7 @@ def compute_static_executability(
         
         total_records += 1
         
-        # 检查可执行性
+        # 检查可执行性 - checker 返回 (errors, warnings, stats)
         errors, warnings, stats = static_checker.check(record)
         
         # Record 级别统计
@@ -105,68 +106,86 @@ def compute_static_executability(
         if warnings:
             records_with_warnings += 1
         
-        # Action 级别统计
+        # 通用 Action 统计
         total_actions += stats.get('total_actions', 0)
-        verified_actions += stats.get('verified_actions', 0)
-        coord_success += stats.get('coord_success', 0)
-        attr_success += stats.get('attr_success', 0)
         
-        # 记录详细结果
-        record_results.append({
+        # 累加数据集特有的数值统计（跳过 rate 类型的字段，这些需要最后重新计算）
+        for key, value in stats.items():
+            if isinstance(value, (int, float)) and key != 'total_actions':
+                # 跳过比率字段（包含 rate 的字段不应该累加）
+                if 'rate' in key.lower():
+                    continue
+                if key not in dataset_specific_stats:
+                    dataset_specific_stats[key] = 0
+                dataset_specific_stats[key] += value
+        
+        # 记录详细结果（保留 checker 返回的所有 stats，包括 action_results）
+        record_result = {
             'sample_id': record.sample_id,
             'annotation_id': record.metadata.get('annotation_id', ''),
             'website': record.website,
-            'total_actions': stats.get('total_actions', 0),
-            'verified_actions': stats.get('verified_actions', 0),
-            'coord_success': stats.get('coord_success', 0),
-            'attr_success': stats.get('attr_success', 0),
-            'coord_rate': stats.get('coord_rate', 0.0),
-            'attr_rate': stats.get('attr_rate', 0.0),
             'errors': errors,
             'warnings': warnings,
-        })
+        }
+        # 合并 stats 中的所有字段（包括 action_results）
+        for key, value in stats.items():
+            record_result[key] = value
+        record_results.append(record_result)
         
         # 进度
         if progress_interval and total_records % progress_interval == 0:
             elapsed = time.time() - start_time
             rate = total_records / elapsed if elapsed > 0 else 0
-            curr_coord_rate = coord_success / verified_actions if verified_actions > 0 else 0
-            curr_attr_rate = attr_success / verified_actions if verified_actions > 0 else 0
             print(f"  [{total_records:,}] {rate:.2f} 条/秒")
-            print(f"    坐标定位: {coord_success}/{verified_actions} ({curr_coord_rate:.1%})")
-            print(f"    属性定位: {attr_success}/{verified_actions} ({curr_attr_rate:.1%})")
     
     elapsed = time.time() - start_time
     
-    # 计算总体成功率
-    coord_rate = coord_success / verified_actions if verified_actions > 0 else 0.0
-    attr_rate = attr_success / verified_actions if verified_actions > 0 else 0.0
-    
-    # 结果
+    # =========================================================================
+    # 构建结果
+    # =========================================================================
     results = {
         'dataset': dataset_name,
         'timestamp': datetime.now().isoformat(),
         'elapsed_seconds': elapsed,
         
-        # Record 级别统计
+        # 通用统计
         'total_records': total_records,
         'records_with_errors': records_with_errors,
         'records_with_warnings': records_with_warnings,
-        
-        # Action 级别统计
         'total_actions': total_actions,
-        'verified_actions': verified_actions,
-        'coord_success': coord_success,
-        'attr_success': attr_success,
-        
-        # 成功率
-        'coord_rate': coord_rate,
-        'attr_rate': attr_rate,
         
         # 详细结果
         'record_results': record_results,
         'error_records': error_records,
     }
+    
+    # 合并数据集特有统计，并计算比率
+    # WebShop: 
+    #   - success_rate = success_count / total_actions (动作执行成功率)
+    #   - task_completion_rate = task_completed / total_records (任务完成率)
+    #   - task_success_rate = task_success / total_records (任务成功率，完成且reward>0)
+    if 'success_count' in dataset_specific_stats and total_actions > 0:
+        dataset_specific_stats['action_success_rate'] = dataset_specific_stats['success_count'] / total_actions
+    if 'task_completed' in dataset_specific_stats and total_records > 0:
+        dataset_specific_stats['task_completion_rate'] = dataset_specific_stats['task_completed'] / total_records
+    if 'task_success' in dataset_specific_stats and total_records > 0:
+        dataset_specific_stats['task_success_rate'] = dataset_specific_stats['task_success'] / total_records
+    if 'task_partial' in dataset_specific_stats and total_records > 0:
+        dataset_specific_stats['task_partial_rate'] = dataset_specific_stats['task_partial'] / total_records
+    # final_reward 改为平均值
+    if 'final_reward' in dataset_specific_stats and total_records > 0:
+        dataset_specific_stats['avg_reward'] = dataset_specific_stats['final_reward'] / total_records
+        del dataset_specific_stats['final_reward']  # 删除累加值，只保留平均值
+    
+    # Mind2Web: coord_rate, attr_rate
+    verified = dataset_specific_stats.get('verified_actions', 0)
+    if verified > 0:
+        if 'coord_success' in dataset_specific_stats:
+            dataset_specific_stats['coord_rate'] = dataset_specific_stats['coord_success'] / verified
+        if 'attr_success' in dataset_specific_stats:
+            dataset_specific_stats['attr_rate'] = dataset_specific_stats['attr_success'] / verified
+    
+    results['dataset_specific_stats'] = dataset_specific_stats
     
     # 保存结果
     if output_file:
@@ -176,14 +195,77 @@ def compute_static_executability(
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
         print(f"\n结果已保存到: {output_file}")
+        
+        # 生成简洁的汇总 log 文件
+        summary_file = output_file.replace('.json', '_summary.txt')
+        _save_summary_log(results, summary_file, elapsed, dataset_name)
     
     # 打印摘要
-    _print_summary(results, elapsed)
+    _print_summary(results, elapsed, dataset_name)
     
     return results
 
 
-def _print_summary(results: Dict[str, Any], elapsed: float):
+def _save_summary_log(results: Dict[str, Any], summary_file: str, elapsed: float, dataset_name: str):
+    """保存简洁的汇总 log 文件"""
+    lines = []
+    lines.append("=" * 60)
+    lines.append(f"Static Executability 评估汇总 - {dataset_name}")
+    lines.append("=" * 60)
+    lines.append(f"时间: {results.get('timestamp', 'N/A')}")
+    lines.append(f"耗时: {elapsed:.1f} 秒")
+    lines.append("")
+    
+    lines.append("【Record 级别】")
+    lines.append(f"  总 Record 数: {results['total_records']:,}")
+    lines.append(f"  有错误: {results['records_with_errors']:,}")
+    lines.append(f"  有警告: {results['records_with_warnings']:,}")
+    lines.append("")
+    
+    lines.append("【Action 级别】")
+    lines.append(f"  总 Action 数: {results['total_actions']:,}")
+    lines.append("")
+    
+    # 数据集特有统计
+    dataset_stats = results.get('dataset_specific_stats', {})
+    if dataset_stats:
+        lines.append(f"【{dataset_name} 特有指标】")
+        for key, value in sorted(dataset_stats.items()):
+            if isinstance(value, float):
+                lines.append(f"  {key}: {value:.4f}")
+            else:
+                lines.append(f"  {key}: {value:,}")
+        lines.append("")
+    
+    # 关键指标汇总（放在最显眼的位置）
+    lines.append("=" * 60)
+    lines.append("【关键指标汇总】")
+    lines.append("=" * 60)
+    
+    if 'task_success_rate' in dataset_stats:
+        lines.append(f"  ✅ 任务成功率 (reward=1.0): {dataset_stats['task_success_rate']:.2%}")
+    if 'task_partial_rate' in dataset_stats:
+        lines.append(f"  ⚠️ 部分成功率 (0<reward<1): {dataset_stats['task_partial_rate']:.2%}")
+    if 'avg_reward' in dataset_stats:
+        lines.append(f"  📊 平均 reward: {dataset_stats['avg_reward']:.4f}")
+    if 'coord_rate' in dataset_stats:
+        lines.append(f"  📍 坐标定位成功率: {dataset_stats['coord_rate']:.2%}")
+    if 'attr_rate' in dataset_stats:
+        lines.append(f"  🏷️ 属性定位成功率: {dataset_stats['attr_rate']:.2%}")
+    
+    lines.append("")
+    lines.append("=" * 60)
+    lines.append(f"详细结果: {summary_file.replace('_summary.txt', '.json')}")
+    lines.append("=" * 60)
+    
+    # 写入文件
+    with open(summary_file, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines))
+    
+    print(f"汇总已保存到: {summary_file}")
+
+
+def _print_summary(results: Dict[str, Any], elapsed: float, dataset_name: str):
     """打印评估摘要"""
     print()
     print("=" * 70)
@@ -197,41 +279,33 @@ def _print_summary(results: Dict[str, Any], elapsed: float):
     print()
     print(f"【Action 级别】")
     print(f"  总 Action 数: {results['total_actions']:,}")
-    print(f"  可验证 Action 数: {results['verified_actions']:,}")
-    print()
-    print(f"【静态可执行性】")
-    print(f"  坐标定位成功率: {results['coord_success']:,}/{results['verified_actions']:,} "
-          f"({results['coord_rate']:.2%})")
-    print(f"  属性定位成功率: {results['attr_success']:,}/{results['verified_actions']:,} "
-          f"({results['attr_rate']:.2%})")
     print()
     
-    # 按网站统计
+    # 打印数据集特有统计
+    dataset_stats = results.get('dataset_specific_stats', {})
+    if dataset_stats:
+        print(f"【{dataset_name} 特有指标】")
+        for key, value in sorted(dataset_stats.items()):
+            if isinstance(value, float):
+                print(f"  {key}: {value:.4f}")
+            else:
+                print(f"  {key}: {value:,}")
+    print()
+    
+    # 按网站统计（如果有多个网站）
     website_stats = {}
     for r in results['record_results']:
         site = r.get('website') or 'unknown'
         if site not in website_stats:
-            website_stats[site] = {
-                'records': 0,
-                'verified': 0,
-                'coord': 0,
-                'attr': 0,
-            }
+            website_stats[site] = {'records': 0, 'actions': 0}
         website_stats[site]['records'] += 1
-        website_stats[site]['verified'] += r.get('verified_actions', 0)
-        website_stats[site]['coord'] += r.get('coord_success', 0)
-        website_stats[site]['attr'] += r.get('attr_success', 0)
+        website_stats[site]['actions'] += r.get('total_actions', 0)
     
     if len(website_stats) > 1:
         print(f"【按网站统计】")
         sorted_sites = sorted(website_stats.items(), key=lambda x: -x[1]['records'])
         for site, stats in sorted_sites[:10]:
-            v = stats['verified']
-            if v > 0:
-                coord_r = stats['coord'] / v
-                attr_r = stats['attr'] / v
-                print(f"  {site}: {stats['records']} records, "
-                      f"坐标 {coord_r:.0%}, 属性 {attr_r:.0%}")
+            print(f"  {site}: {stats['records']} records, {stats['actions']} actions")
         if len(sorted_sites) > 10:
             print(f"  ... 还有 {len(sorted_sites) - 10} 个网站")
         print()

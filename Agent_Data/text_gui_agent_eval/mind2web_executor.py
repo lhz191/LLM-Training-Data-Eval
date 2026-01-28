@@ -35,8 +35,12 @@ from typing import List, Dict, Any, Tuple, Optional
 from text_gui_executor import (
     StaticExecutabilityChecker, 
     DynamicExecutabilityChecker,
+    FormatChecker,
+    HTMLLocator,
     register_static_checker,
     register_dynamic_checker,
+    register_format_checker,
+    register_html_locator,
 )
 from data_types import Record, Action
 
@@ -528,8 +532,9 @@ def verify_by_coords(page, target_element) -> Tuple[bool, str, Any]:
                 return elements[{elem_idx}];
             }}""")
             
-            is_null = page.evaluate("(el) => el === null", element)
-            if is_null:
+            # 检查 null 或 undefined
+            is_invalid = page.evaluate("(el) => el === null || el === undefined || !el", element)
+            if is_invalid:
                 continue
             
             last_top_element = element
@@ -678,28 +683,38 @@ def verify_element_match(page, element_handle, expected_info):
         return False, "element_is_none", 0, 0
     
     # 获取实际元素属性（通过 JavaScript）
-    actual_attrs = page.evaluate("""(element) => {
-        return {
-            tag: element.tagName.toLowerCase(),
-            class: element.getAttribute('class') || '',
-            id: element.getAttribute('id') || '',
-            name: element.getAttribute('name') || '',
-            placeholder: element.getAttribute('placeholder') || '',
-            title: element.getAttribute('title') || '',
-            aria_label: element.getAttribute('aria-label') || '',
-            aria_description: element.getAttribute('aria-description') || '',
-            role: element.getAttribute('role') || '',
-            type: element.getAttribute('type') || '',
-            alt: element.getAttribute('alt') || '',
-            value: element.getAttribute('value') || '',
-            label: element.getAttribute('label') || '',
-            text: element.textContent || '',
-            is_displayed: element.offsetParent !== null,
-            is_enabled: !element.disabled,
-            input_value: element.value || '',
-            input_checked: element.checked
-        };
-    }""", element_handle)
+    # 添加保护检查，防止元素已被移除或失效
+    try:
+        actual_attrs = page.evaluate("""(element) => {
+            if (!element || !element.tagName) {
+                return null;
+            }
+            return {
+                tag: element.tagName.toLowerCase(),
+                class: element.getAttribute('class') || '',
+                id: element.getAttribute('id') || '',
+                name: element.getAttribute('name') || '',
+                placeholder: element.getAttribute('placeholder') || '',
+                title: element.getAttribute('title') || '',
+                aria_label: element.getAttribute('aria-label') || '',
+                aria_description: element.getAttribute('aria-description') || '',
+                role: element.getAttribute('role') || '',
+                type: element.getAttribute('type') || '',
+                alt: element.getAttribute('alt') || '',
+                value: element.getAttribute('value') || '',
+                label: element.getAttribute('label') || '',
+                text: element.textContent || '',
+                is_displayed: element.offsetParent !== null,
+                is_enabled: !element.disabled,
+                input_value: element.value || '',
+                input_checked: element.checked
+            };
+        }""", element_handle)
+        
+        if actual_attrs is None:
+            return False, "element_stale_or_invalid", 0, 0
+    except Exception as e:
+        return False, f"element_evaluate_error: {str(e)[:50]}", 0, 0
     
     actual_tag = actual_attrs['tag']
     actual_class = actual_attrs['class']
@@ -943,7 +958,10 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
     """
     
     # 默认 raw_dump 路径
-    DEFAULT_RAW_DUMP_PATH = '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/Mind2Web/raw_dump'
+    # 本机路径
+    DEFAULT_RAW_DUMP_PATH = '/home/liuhaoze/data/raw_dump'
+    # 远程路径（集群）
+    # DEFAULT_RAW_DUMP_PATH = '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/Mind2Web/raw_dump'
     
     def __init__(
         self,
@@ -1028,16 +1046,30 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
             annotation_id: Record 的 annotation_id
             
         Returns:
-            验证结果字典
+            验证结果字典，包含详细的目标元素信息和验证结果
         """
         action_uid = action.metadata.get('action_uid', '')
         operation = action.metadata.get('operation', {})
+        
+        # 解析目标元素信息
+        target_info = {}
+        if action.target_element:
+            candidate_info = parse_candidate(action.target_element)
+            bbox = candidate_info.get('bbox')
+            target_info = {
+                'tag': candidate_info.get('tag', ''),
+                'classes': candidate_info.get('classes', []),
+                'id': candidate_info.get('id', ''),
+                'text': candidate_info.get('text', ''),
+                'bbox': bbox,
+            }
         
         result = {
             'action_idx': action.action_idx,
             'action_uid': action_uid,
             'action_type': action.action_type,
             'action_repr': action.action_repr,
+            'target_element': target_info,  # 目标元素详细信息
             'mhtml_found': False,
             'coord_success': False,
             'attr_success': False,
@@ -1060,30 +1092,52 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
             self._page.goto(file_url, wait_until='domcontentloaded', timeout=self.timeout)
             time.sleep(0.3)
         except Exception as e:
-            result['coord_reason'] = f'load_failed: {str(e)[:50]}'
-            result['attr_reason'] = f'load_failed: {str(e)[:50]}'
+            result['coord_reason'] = f'load_failed: {str(e)}'
+            result['attr_reason'] = f'load_failed: {str(e)}'
             return result
         
         action_repr = action.action_repr or f"{action.action_type} action"
-        print(f"\n  操作: {action_repr}")
+        print(f"操作描述: {action_repr}")
         
         # 坐标定位验证（使用内化方法）
         print("\n[指标1] 坐标定位:")
         try:
-            coord_success, coord_reason, _ = self._verify_by_coords(action)
+            coord_success, coord_reason, coord_element = self._verify_by_coords(action)
             result['coord_success'] = coord_success
             result['coord_reason'] = coord_reason
+            # 如果成功，记录找到的元素信息
+            if coord_success and coord_element:
+                try:
+                    found_info = self._page.evaluate("""(el) => ({
+                        tag: el.tagName.toLowerCase(),
+                        class: el.getAttribute('class') || '',
+                        id: el.getAttribute('id') || '',
+                    })""", coord_element)
+                    result['coord_found_element'] = found_info
+                except:
+                    pass
         except Exception as e:
-            result['coord_reason'] = f'exception: {str(e)[:50]}'
+            result['coord_reason'] = f'exception: {str(e)}'
         
         # 属性定位验证（使用内化方法）
         print("\n[指标2] 属性定位:")
         try:
-            attr_success, attr_reason, _ = self._verify_by_attrs(action)
+            attr_success, attr_reason, attr_element = self._verify_by_attrs(action)
             result['attr_success'] = attr_success
             result['attr_reason'] = attr_reason
+            # 如果成功，记录找到的元素信息
+            if attr_success and attr_element:
+                try:
+                    found_info = self._page.evaluate("""(el) => ({
+                        tag: el.tagName.toLowerCase(),
+                        class: el.getAttribute('class') || '',
+                        id: el.getAttribute('id') || '',
+                    })""", attr_element)
+                    result['attr_found_element'] = found_info
+                except:
+                    pass
         except Exception as e:
-            result['attr_reason'] = f'exception: {str(e)[:50]}'
+            result['attr_reason'] = f'exception: {str(e)}'
         
         return result
     
@@ -1117,13 +1171,22 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
         # 确保浏览器已启动
         self._ensure_browser()
         
+        # 打印 Record 信息
+        total_actions = len(record.actions)
+        print(f"\n{'='*70}")
+        print(f"📋 Record: {record.sample_id} | annotation_id: {annotation_id[:16]}...")
+        print(f"   网站: {record.website or 'N/A'} | Actions: {total_actions}")
+        print(f"{'='*70}")
+        
         # 验证每个 Action
         action_results = []
         mhtml_found_count = 0
         coord_success_count = 0
         attr_success_count = 0
         
-        for action in record.actions:
+        for idx, action in enumerate(record.actions):
+            print(f"\n{'─'*60}")
+            print(f"步骤 {idx+1}/{total_actions}: [{action.action_type.upper()}] {action.metadata.get('action_uid', '')[:8]}...")
             result = self._verify_single_action(action, annotation_id)
             action_results.append(result)
             
@@ -1385,8 +1448,9 @@ class Mind2WebDynamicChecker(DynamicExecutabilityChecker):
                     "(args) => document.elementFromPoint(args.x, args.y)",
                     {"x": center_x, "y": viewport_y}
                 )
-                is_null = page.evaluate("(el) => el === null", element)
-                if is_null:
+                # 检查 null 或 undefined
+                is_invalid = page.evaluate("(el) => el === null || el === undefined || !el", element)
+                if is_invalid:
                     return False, "element_not_found_by_coords"
             else:
                 # 使用属性定位
@@ -1569,20 +1633,61 @@ class Mind2WebDynamicChecker(DynamicExecutabilityChecker):
             attrs_mark = "✓" if attrs_success else "✗"
             print(f"  => 结果: 坐标 {coords_mark} | 属性 {attrs_mark}")
             
-            # 记录结果
-            results.append({
+            # 构建详细的 result 字典
+            result_entry = {
                 'step': i,
                 'action_idx': action.action_idx,
-                'action': action_repr,
+                'action_uid': action_uid,  # 不截断
+                'action_type': op,
+                'action_repr': action_repr,  # 不截断
                 'op': op,
-                'value': value,
+                'value': value,  # 不截断
                 'coords_success': coords_success,
-                'coords_reason': coords_reason,
+                'coords_reason': coords_reason,  # 不截断
                 'attrs_success': attrs_success,
-                'attrs_reason': attrs_reason,
+                'attrs_reason': attrs_reason,  # 不截断
                 'executed': False,
                 'exec_reason': None,
-            })
+            }
+            
+            # 添加 target_element 详细信息
+            if target_element:
+                candidate_info = parse_candidate(target_element)
+                bbox = candidate_info.get('bbox')
+                result_entry['target_element'] = {
+                    'tag': candidate_info.get('tag', ''),
+                    'classes': candidate_info.get('class', '').split() if candidate_info.get('class') else [],
+                    'id': candidate_info.get('id', ''),
+                    'name': candidate_info.get('name', ''),
+                    'text': candidate_info.get('text', ''),  # 不截断
+                    'aria_label': candidate_info.get('aria_label', ''),
+                    'placeholder': candidate_info.get('placeholder', ''),
+                    'bbox': bbox if bbox else None,
+                }
+            
+            # 添加坐标定位找到的元素信息
+            if coords_element:
+                try:
+                    result_entry['coord_found_element'] = {
+                        'tag': coords_element.evaluate("el => el.tagName.toLowerCase()"),
+                        'class': coords_element.get_attribute('class') or '',
+                        'id': coords_element.get_attribute('id') or '',
+                    }
+                except:
+                    result_entry['coord_found_element'] = None
+            
+            # 添加属性定位找到的元素信息
+            if attrs_element:
+                try:
+                    result_entry['attr_found_element'] = {
+                        'tag': attrs_element.evaluate("el => el.tagName.toLowerCase()"),
+                        'class': attrs_element.get_attribute('class') or '',
+                        'id': attrs_element.get_attribute('id') or '',
+                    }
+                except:
+                    result_entry['attr_found_element'] = None
+            
+            results.append(result_entry)
             
             # ===== 执行操作（可选） =====
             if execute:
@@ -1633,11 +1738,193 @@ class Mind2WebDynamicChecker(DynamicExecutabilityChecker):
 
 
 # =============================================================================
-# 注册检查器
+# 格式检查器
+# =============================================================================
+
+class Mind2WebFormatChecker(FormatChecker):
+    """
+    Mind2Web 数据格式检查器
+    
+    检查项：
+    1. Record 级别
+       - annotation_id 是否存在
+       - instruction 是否存在且非空
+       - actions 是否存在且非空
+       
+    2. Action 级别
+       - action_uid 是否存在
+       - target_element 是否存在
+       - operation 是否存在（op 字段）
+       - candidates 是否存在
+       
+    3. 数据一致性检查
+       - target 是否在 candidates 中（通过 backend_node_id 匹配）
+       - backend_node_id 是否在 cleaned_html 中可找到
+    """
+    
+    def check(self, record: Record) -> Tuple[List[str], List[str]]:
+        """检查 Mind2Web Record 的数据格式"""
+        errors = []
+        warnings = []  # 保留接口，但不使用
+        
+        # === 1. Record 级别检查 ===
+        
+        # annotation_id
+        annotation_id = record.metadata.get('annotation_id', '')
+        if not annotation_id:
+            errors.append("Record missing 'annotation_id' in metadata")
+        
+        # instruction
+        if not record.instruction or not record.instruction.strip():
+            errors.append("Record has empty 'instruction'")
+        
+        # actions
+        if not record.actions:
+            errors.append("Record has no actions")
+            return errors, warnings  # 无法继续检查 action 级别
+        
+        # === 2. Action 级别检查 ===
+        for i, action in enumerate(record.actions):
+            action_errors, _ = self._check_action(action, i)
+            errors.extend(action_errors)
+        
+        return errors, warnings
+    
+    def _check_action(self, action: Action, idx: int) -> Tuple[List[str], List[str]]:
+        """检查单个 Action 的格式"""
+        errors = []
+        warnings = []  # 保留接口，但不使用
+        prefix = f"Action[{idx}]"
+        
+        # action_uid
+        action_uid = action.metadata.get('action_uid', '')
+        if not action_uid:
+            errors.append(f"{prefix}: missing 'action_uid'")
+        
+        # target_element
+        target = action.target_element
+        if not target:
+            errors.append(f"{prefix}: missing 'target_element'")
+        else:
+            # 检查 backend_node_id
+            backend_node_id = target.get('backend_node_id')
+            if not backend_node_id:
+                errors.append(f"{prefix}: target_element missing 'backend_node_id'")
+        
+        # operation
+        operation = action.metadata.get('operation', {})
+        if not operation:
+            errors.append(f"{prefix}: missing 'operation' in metadata")
+        else:
+            op = operation.get('op', '').upper()
+            value = operation.get('value', '')
+            
+            if not op:
+                errors.append(f"{prefix}: operation missing 'op' field")
+            else:
+                # 根据操作类型检查 value
+                # CLICK: 不应该有 value
+                # SELECT/TYPE: 必须有 value
+                if op == 'CLICK':
+                    if value and value.strip():
+                        errors.append(f"{prefix}: CLICK should not have value, got '{value[:30]}'")
+                elif op in ('SELECT', 'TYPE'):
+                    if not value or not value.strip():
+                        errors.append(f"{prefix}: {op} must have value")
+        
+        # candidates
+        candidates = action.candidates
+        if not candidates:
+            errors.append(f"{prefix}: no candidates")
+        else:
+            # === 3. 数据一致性检查 ===
+            # 检查 target 是否在 candidates 中
+            if target:
+                target_in_candidates = self._check_target_in_candidates(target, candidates)
+                if not target_in_candidates:
+                    errors.append(f"{prefix}: target not found in candidates")
+        
+        # cleaned_html
+        if not action.cleaned_html:
+            errors.append(f"{prefix}: empty 'cleaned_html'")
+        else:
+            # 检查 backend_node_id 是否在 cleaned_html 中可找到
+            if target:
+                backend_node_id = target.get('backend_node_id')
+                if backend_node_id:
+                    # 在 cleaned_html 中搜索 backend_node_id
+                    # 可能的格式: backend_node_id="136" 或 data-backend-node-id="136" 或直接作为某个属性值
+                    node_id_str = str(backend_node_id)
+                    if node_id_str not in action.cleaned_html:
+                        errors.append(f"{prefix}: backend_node_id not found in cleaned_html")
+        
+        return errors, warnings
+    
+    def _check_target_in_candidates(self, target: Dict, candidates: List[Dict]) -> bool:
+        """检查 target 是否在 candidates 中（通过 backend_node_id 匹配）"""
+        target_node_id = target.get('backend_node_id')
+        if not target_node_id:
+            return False
+        
+        for cand in candidates:
+            if cand.get('backend_node_id') == target_node_id:
+                return True
+        
+        return False
+
+
+# =============================================================================
+# HTML 定位器
+# =============================================================================
+
+class Mind2WebLocator(HTMLLocator):
+    """
+    Mind2Web HTML 定位器
+    
+    定位方式：通过 backend_node_id
+    格式：<tag backend_node_id="136" ...>
+    
+    Mind2Web 的 cleaned_html 保留了 backend_node_id 属性，
+    所以理论上定位率应该很高。
+    """
+    
+    def can_locate(self, action: Action, html: str) -> Tuple[bool, str]:
+        """
+        检查是否能在 HTML 中定位到 target
+        
+        Args:
+            action: Action 对象
+            html: HTML 字符串（可以是 raw_html 或 cleaned_html）
+            
+        Returns:
+            (success, reason)
+        """
+        if not html:
+            return False, "empty_html"
+        
+        target = action.target_element
+        if not target:
+            return False, "no_target_element"
+        
+        backend_node_id = target.get('backend_node_id')
+        if not backend_node_id:
+            return False, "no_backend_node_id"
+        
+        node_id_str = str(backend_node_id)
+        if node_id_str in html:
+            return True, "found"
+        else:
+            return False, "not_found"
+
+
+# =============================================================================
+# 注册检查器和定位器
 # =============================================================================
 
 register_static_checker('mind2web', Mind2WebStaticChecker)
 register_dynamic_checker('mind2web', Mind2WebDynamicChecker)
+register_format_checker('mind2web', Mind2WebFormatChecker)
+register_html_locator('mind2web', Mind2WebLocator)
 
 
 # =============================================================================
@@ -1650,7 +1937,7 @@ def main():
     
     parser = argparse.ArgumentParser(description='Mind2Web 静态可执行性检查')
     parser.add_argument('--data-path', type=str, 
-                        default='/mnt/petrelfs/liuhaoze/datasets/Agent_Data/Mind2Web/data',
+                        default='/home/liuhaoze/Desktop/mind2web',
                         help='Mind2Web 数据路径')
     parser.add_argument('--raw-dump', type=str,
                         default=Mind2WebStaticChecker.DEFAULT_RAW_DUMP_PATH,

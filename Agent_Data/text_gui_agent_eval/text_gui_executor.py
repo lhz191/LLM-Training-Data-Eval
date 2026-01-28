@@ -104,12 +104,74 @@ class DynamicExecutabilityChecker(ABC):
         pass
 
 
+class FormatChecker(ABC):
+    """
+    数据格式检查器基类
+    
+    用于验证 Record 的数据格式是否正确，包括：
+    - 必需字段是否存在
+    - 字段格式是否正确
+    - 数据一致性检查（如 target 在 candidates 中存在）
+    
+    这是一个轻量级检查，不需要浏览器，速度快。
+    """
+    
+    @abstractmethod
+    def check(self, record: Record) -> Tuple[List[str], List[str]]:
+        """
+        检查单个 Record 的数据格式
+        
+        Args:
+            record: GUI Agent Record
+            
+        Returns:
+            (errors, warnings) 元组
+            - errors: 错误列表（格式问题，必须修复）
+            - warnings: 警告列表（建议修复但不影响使用）
+        """
+        pass
+
+
+class HTMLLocator(ABC):
+    """
+    HTML 定位器基类
+    
+    用于检查是否能在 HTML 中定位到目标元素，计算信息保留率：
+    - raw_html 定位成功率
+    - cleaned_html 定位成功率  
+    - 保留率 = cleaned_html 成功数 / raw_html 成功数
+    
+    每个数据集的定位方式不同：
+    - Mind2Web: 通过 backend_node_id（如 backend_node_id="136"）
+    - WebShop: 通过 [button] xxx [button_] 模式
+    - WebLINX: 通过 data-webtasks-id（如 data-webtasks-id="xxx"）
+    """
+    
+    @abstractmethod
+    def can_locate(self, action, html: str) -> Tuple[bool, str]:
+        """
+        检查是否能在 HTML 中定位到目标元素
+        
+        Args:
+            action: Action 对象
+            html: HTML 字符串（可以是 raw_html 或 cleaned_html）
+            
+        Returns:
+            (success, reason) 元组
+            - success: 是否定位成功
+            - reason: 原因说明（如 "found", "not_found", "no_target"）
+        """
+        pass
+
+
 # =============================================================================
 # 注册表
 # =============================================================================
 
 STATIC_CHECKERS = {}
 DYNAMIC_CHECKERS = {}
+FORMAT_CHECKERS = {}
+HTML_LOCATORS = {}
 
 
 # =============================================================================
@@ -124,6 +186,16 @@ def register_static_checker(name: str, checker_class: type):
 def register_dynamic_checker(name: str, checker_class: type):
     """注册动态可执行性检查器"""
     DYNAMIC_CHECKERS[name.lower()] = checker_class
+
+
+def register_format_checker(name: str, checker_class: type):
+    """注册格式检查器"""
+    FORMAT_CHECKERS[name.lower()] = checker_class
+
+
+def register_html_locator(name: str, locator_class: type):
+    """注册 HTML 定位器"""
+    HTML_LOCATORS[name.lower()] = locator_class
 
 
 # =============================================================================
@@ -174,6 +246,46 @@ def get_dynamic_checker(dataset_name: str, **kwargs) -> DynamicExecutabilityChec
     return DYNAMIC_CHECKERS[name_lower](**kwargs)
 
 
+def get_format_checker(dataset_name: str, **kwargs) -> FormatChecker:
+    """
+    获取指定数据集的格式检查器
+    
+    Args:
+        dataset_name: 数据集名称 (mind2web, webshop, weblinx)
+        **kwargs: 传递给检查器的额外参数
+        
+    Returns:
+        格式检查器实例
+    """
+    name_lower = dataset_name.lower().replace('_', '-').replace(' ', '')
+    
+    if name_lower not in FORMAT_CHECKERS:
+        available = list(FORMAT_CHECKERS.keys())
+        raise ValueError(f"Unknown dataset: {dataset_name}. Available: {available}")
+    
+    return FORMAT_CHECKERS[name_lower](**kwargs)
+
+
+def get_html_locator(dataset_name: str, **kwargs) -> HTMLLocator:
+    """
+    获取指定数据集的 HTML 定位器
+    
+    Args:
+        dataset_name: 数据集名称 (mind2web, webshop, weblinx)
+        **kwargs: 传递给定位器的额外参数
+        
+    Returns:
+        HTML 定位器实例
+    """
+    name_lower = dataset_name.lower().replace('_', '-').replace(' ', '')
+    
+    if name_lower not in HTML_LOCATORS:
+        available = list(HTML_LOCATORS.keys())
+        raise ValueError(f"Unknown dataset: {dataset_name}. Available: {available}")
+    
+    return HTML_LOCATORS[name_lower](**kwargs)
+
+
 # =============================================================================
 # 列出可用检查器
 # =============================================================================
@@ -186,6 +298,16 @@ def list_static_checkers() -> List[str]:
 def list_dynamic_checkers() -> List[str]:
     """列出所有可用的动态可执行性检查器"""
     return list(DYNAMIC_CHECKERS.keys())
+
+
+def list_format_checkers() -> List[str]:
+    """列出所有可用的格式检查器"""
+    return list(FORMAT_CHECKERS.keys())
+
+
+def list_html_locators() -> List[str]:
+    """列出所有可用的 HTML 定位器"""
+    return list(HTML_LOCATORS.keys())
 
 
 # =============================================================================

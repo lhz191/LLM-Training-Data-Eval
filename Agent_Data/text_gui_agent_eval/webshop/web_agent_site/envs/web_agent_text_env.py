@@ -299,10 +299,13 @@ class SimServer:
         self.all_products, self.product_item_dict, self.product_prices, _ = \
             load_products(filepath=file_path, num_products=num_products, human_goals=human_goals)
         self.search_engine = init_search_engine(num_products=num_products)
+        
+        # ★ 在 get_goals() 之前设置 seed，确保价格生成一致
+        random.seed(233)
         self.goals = get_goals(self.all_products, self.product_prices, human_goals)
         self.show_attrs = show_attrs
 
-        # Fix outcome for random shuffling of goals
+        # 重新设置 seed 确保 shuffle 顺序一致
         random.seed(233)
         random.shuffle(self.goals)
 

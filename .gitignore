@@ -69,17 +69,17 @@ logs/
 1.txt
 
 # Dataset specific (数据集太大)
-Symbolic_and_Logical_Data/GSM8K/
-Symbolic_and_Logical_Data/GSM8K-Aug/
-Symbolic_and_Logical_Data/LILA/
-Symbolic_and_Logical_Data/MetaMathQA/
-Symbolic_and_Logical_Data/Nemotron-Math-Proofs-v1/
-Symbolic_and_Logical_Data/NuminaMath-CoT/
-Symbolic_and_Logical_Data/OpenMathInstruct-1/
+modalities/Symbolic_and_Logical_Data/GSM8K/
+modalities/Symbolic_and_Logical_Data/GSM8K-Aug/
+modalities/Symbolic_and_Logical_Data/LILA/
+modalities/Symbolic_and_Logical_Data/MetaMathQA/
+modalities/Symbolic_and_Logical_Data/Nemotron-Math-Proofs-v1/
+modalities/Symbolic_and_Logical_Data/NuminaMath-CoT/
+modalities/Symbolic_and_Logical_Data/OpenMathInstruct-1/
 
-Agent_Data/mind2web/
-Agent_Data/toolbench/
-Agent_Data/xlam_60k/
+modalities/Agent_Data/mind2web/
+modalities/Agent_Data/toolbench/
+modalities/Agent_Data/xlam_60k/
 
 # OS files
 .DS_Store
@@ -92,12 +92,32 @@ OpenDataArena-Tool/
 Skills/
 
 # Vision_Language_Data - 忽略大部分，但保留 video_text_eval 和 image_text_eval
-Vision_Language_Data/*
-!Vision_Language_Data/video_text_eval/
-!Vision_Language_Data/image_text_eval/
+modalities/Vision_Language_Data/*
+!modalities/Vision_Language_Data/video_text_eval/
+!modalities/Vision_Language_Data/image_text_eval/
 
-Agent_Data/api_agent_eval/cache/*
-!Agent_Data/api_agent_eval/cache/.gitkeep
+# API Agent - cache 和 embeddings
+modalities/Agent_Data/api_agent_eval/cache/*
+!modalities/Agent_Data/api_agent_eval/cache/.gitkeep
 
-Agent_Data/text_gui_agent_eval/results/*
-!Agent_Data/text_gui_agent_eval/results/.gitkeep
+# Text GUI Agent - results (保留目录结构，忽略结果文件)
+modalities/Agent_Data/text_gui_agent_eval/results/*
+!modalities/Agent_Data/text_gui_agent_eval/results/.gitkeep
+!modalities/Agent_Data/text_gui_agent_eval/results/mind2web/
+!modalities/Agent_Data/text_gui_agent_eval/results/webshop/
+!modalities/Agent_Data/text_gui_agent_eval/results/weblinx/
+modalities/Agent_Data/text_gui_agent_eval/results/mind2web/*
+modalities/Agent_Data/text_gui_agent_eval/results/webshop/*
+modalities/Agent_Data/text_gui_agent_eval/results/weblinx/*
+!modalities/Agent_Data/text_gui_agent_eval/results/mind2web/.gitkeep
+!modalities/Agent_Data/text_gui_agent_eval/results/webshop/.gitkeep
+!modalities/Agent_Data/text_gui_agent_eval/results/weblinx/.gitkeep
+
+# API Agent - results
+modalities/Agent_Data/api_agent_eval/results/*
+!modalities/Agent_Data/api_agent_eval/results/toolbench/
+!modalities/Agent_Data/api_agent_eval/results/xlam/
+modalities/Agent_Data/api_agent_eval/results/toolbench/*
+modalities/Agent_Data/api_agent_eval/results/xlam/*
+!modalities/Agent_Data/api_agent_eval/results/toolbench/.gitkeep
+!modalities/Agent_Data/api_agent_eval/results/xlam/.gitkeep

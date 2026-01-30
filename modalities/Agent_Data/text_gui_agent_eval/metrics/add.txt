@@ -1,0 +1,70 @@
+mind2web的静态和动态可执行性为什么不使用backnode_id？因为其实我们在模拟agent学习完训练数据之后的表现，
+他们在面临页面的时候没有id，只会利用学到的属性和坐标信息（这种特指有图的那种，用html训得，属性中带坐标的，我不知道agent能不能通过坐标学到位置关系）
+
+webshop也是一样，利用官方的仿真环境，跑了一下数据集的goal
+
+weblinx也是，用candidate中数据集中的属性，而不是replay.json中操作时收集到的完整属性
+
+
+
+
+上述感觉更像是在模拟agent的学习过程，学完之后，通过这个数据集agent能在他的快照和真实页面上的成功率达到多少
+
+也可以加一个数据集的验证指标嘛，就是收集的数据集到底能否执行，是否是真正可用的
+
+
+数据一般相较于原始html来说会压缩嘛，html的重要信息保留率其实也可以是agent学到的可执行性/数据集的收集层面的真实可执行性
+
+
+
+
+weblinx官方有利用坐标找元素的方法，他们是去寻找raw数据集中记录的box位置，怎么说呢
+
+还是看目的吧，如果是agent真正去操作网页的时候应该是没有这些box记录的，而我们的代码确实可以模拟agent查看网站时的逻辑
+
+
+
+
+def get_element_uid_by_coords(turn: "Turn", x, y):
+    """
+    Given (x,y) coordinates for an element, find the smallest non-zero-sized element that contains the coordinates using bboxes and return its id.
+    """
+    bboxes = turn.bboxes
+
+    if not bboxes:
+        return None
+
+    # find the smallest element that contains the coordinates
+    min_elem_size = None
+    elem_uid = None
+
+    for uid, bbox in bboxes.items():
+        left = math.floor(bbox["left"])
+        right = math.ceil(bbox["right"])
+        top = math.floor(bbox["top"])
+        bottom = math.ceil(bbox["bottom"])
+        if left <= x <= right and top <= y <= bottom:
+            elem_size = bbox["width"] * bbox["height"]
+
+            if elem_size == 0:
+                continue
+
+            if min_elem_size is None or elem_size < min_elem_size:
+                min_elem_size = bbox["width"] * bbox["height"]
+                elem_uid = uid
+
+    return elem_uid
+
+
+
+weblinx的数据质量问题：，证明单纯的按论文的步骤验证一下数据是否真实可执行，可能也是必要的
+
+这也对于数据的合成，数据的生成和构造过程有重要的指导
+
+ 您问得非常好！这确实是一个重要问题。让我分析一下：
+数据来源分析：
+数据收集时间线:   t1          t2          t3          t4   │           │           │           │   ▼           ▼           ▼           ▼[页面快照]  [元素变化]  [bboxes收集]  [action记录]page-6.html            bboxes-6.json  candidates
+问题根源：
+动态网页：页面内容会变化（弹窗、下拉菜单、登录状态等）
+时间差：page 文件、bboxes 文件、candidates 可能在不同时刻收集
+结果：某些元素在 candidates 中有记录，但在对应的 page 文件中可能不存在   

@@ -35,12 +35,28 @@ DATASETS = {
         # 'data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/Mind2Web/data',
         # 'raw_dump_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/Mind2Web/raw_dump',
         'has_dynamic': True,  # 支持动态可执行性（真实网站）
+        # 动作映射表（数据集动作 → Playwright 标准动作）
+        # Mind2Web 动作类型: click, type, select, hover (loader 中已转小写)
+        'action_mapping': {
+            'click': 'click',
+            'type': 'fill',           # Mind2Web 的 type → Playwright 的 fill
+            'select': 'select_option',
+            'hover': 'hover',
+        },
+        'skip_actions': set(),  # 无需跳过的动作
     },
     'webshop': {
         'name': 'WebShop',
         'data_path': os.path.join(os.path.dirname(os.path.dirname(__file__)), 'webshop/baseline_models/data/il_trajs_finalized_images.jsonl'),
         'use_browser': False,  # 默认使用 Text 环境
         'has_dynamic': False,  # 仿真环境，不支持动态可执行性
+        # 动作映射表
+        # WebShop 动作类型: search, click (仅两种)
+        'action_mapping': {
+            'click': 'click',
+            'search': 'fill',  # search 本质是在搜索框输入
+        },
+        'skip_actions': set(),
     },
     'weblinx': {
         'name': 'WebLINX',
@@ -52,6 +68,18 @@ DATASETS = {
         # 'data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/weblinx/chat_data/data/chat',
         # 'raw_data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/weblinx/raw_data',
         'has_dynamic': True,  # 支持动态可执行性（真实网站）
+        # 动作映射表
+        # WebLINX 动作类型: click, say, text_input, scroll, load, submit, change
+        'action_mapping': {
+            'click': 'click',
+            'text_input': 'fill',
+            'change': 'select_option',
+            'submit': 'click',        # submit 通常是点击提交按钮
+            'scroll': 'scroll_into_view',
+            'load': 'goto',
+            # 注意: 'say' 不在此映射中，由 skip_actions 处理
+        },
+        'skip_actions': {'say'},  # 跳过对话动作（非浏览器操作）
     },
 }
 
@@ -256,8 +284,20 @@ def run_dynamic_executability(
         )
         
     elif dataset_key == 'weblinx':
-        # TODO: WebLINX checker 还未实现
-        raise NotImplementedError("WebLINX dynamic checker not implemented yet")
+        from loaders import WebLINXLoader
+        from executor.weblinx import WebLINXDynamicChecker
+        
+        # 加载数据 - 先完整解析所有数据
+        loader = WebLINXLoader(config['data_path'], 'train')
+        print("正在解析 WebLINX 数据...")
+        all_records = loader.parse_all(show_progress=True)
+        print(f"解析完成，共 {len(all_records)} 条记录")
+        print()
+        
+        # 创建检查器
+        checker = WebLINXDynamicChecker(
+            headless=not show_browser,
+        )
     
     # 运行评估 - 使用预先解析好的 all_records
     results = compute_dynamic_executability(
@@ -433,6 +473,7 @@ def run_html_retention(
     
     elif dataset_key == 'weblinx':
         from loaders import WebLINXLoader
+        from executor.weblinx.utils import load_raw_html_for_records
         
         # 加载数据
         loader = WebLINXLoader(config['data_path'], 'train')
@@ -440,6 +481,20 @@ def run_html_retention(
         all_records = loader.parse_all(show_progress=True)
         print(f"解析完成，共 {len(all_records)} 条记录")
         print()
+        
+        # WebLINX 需要从 pages/*.html 文件加载 raw_html
+        raw_data_path = config.get('raw_data_path')
+        if raw_data_path:
+            print("正在加载 WebLINX raw_html（从 pages/*.html）...")
+            total_actions = sum(len(r.actions) for r in all_records)
+            loaded_count, failed_count = load_raw_html_for_records(all_records, raw_data_path, show_progress=True)
+            print(f"  ✅ 成功加载: {loaded_count:,} / {total_actions:,}")
+            if failed_count > 0:
+                print(f"  ⚠️ 加载失败: {failed_count:,}")
+            print()
+        else:
+            print("⚠️ 未配置 raw_data_path，无法加载 raw_html")
+            print()
     
     # 限制样本数
     if max_samples:
@@ -460,6 +515,248 @@ def run_html_retention(
 
 
 # =============================================================================
+# Diversity 统计
+# =============================================================================
+
+def run_diversity(
+    dataset_key: str, 
+    max_samples: int = None, 
+    progress_interval: int = 100,
+):
+    """运行指定数据集的多样性统计
+    
+    全自动统计，无需用户配置。
+    
+    Args:
+        dataset_key: 数据集标识
+        max_samples: 最大样本数（用于测试）
+        progress_interval: 进度显示间隔
+    """
+    if dataset_key not in DATASETS:
+        print(f"未知数据集: {dataset_key}")
+        print(f"可用数据集: {list(DATASETS.keys())}")
+        return
+    
+    config = DATASETS[dataset_key]
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # 输出目录
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, 'diversity_results.json')
+    
+    print(f"\n{'='*70}")
+    print(f"Diversity 统计: {config['name']}")
+    print(f"开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    if max_samples:
+        print(f"样本限制: {max_samples}")
+    else:
+        print(f"模式: 全量")
+    print(f"{'='*70}\n")
+    
+    # 导入多样性统计模块
+    from metrics.diversity import compute_diversity
+    
+    # 创建 Loader（流式加载，不先加载全部数据到内存）
+    if dataset_key == 'mind2web':
+        from loaders import Mind2WebLoader
+        loader = Mind2WebLoader(config['data_path'])
+        
+    elif dataset_key == 'webshop':
+        from loaders import WebShopLoader
+        loader = WebShopLoader(config['data_path'])
+    
+    elif dataset_key == 'weblinx':
+        from loaders import WebLINXLoader
+        loader = WebLINXLoader(config['data_path'], 'train')
+    
+    else:
+        print(f"数据集 {dataset_key} 暂不支持多样性统计")
+        return
+    
+    # 计算多样性统计（流式处理，由 compute_diversity 内部控制 max_samples）
+    results = compute_diversity(
+        data_iterator=loader.iterate(),  # 流式迭代，不加载全部到内存
+        dataset_name=config['name'],
+        output_file=output_file,
+        max_samples=max_samples,  # 在 compute_diversity 内部限制
+        progress_interval=progress_interval,
+        action_mapping=config.get('action_mapping'),
+        skip_actions=config.get('skip_actions'),
+    )
+    
+    return results
+
+
+# =============================================================================
+# Trajectory Validity 评估 (LLM Judge)
+# =============================================================================
+
+def run_trajectory_validity(
+    dataset_key: str, 
+    max_samples: int = None, 
+    progress_interval: int = 10,
+):
+    """运行指定数据集的轨迹有效性评估（LLM Judge）
+    
+    Args:
+        dataset_key: 数据集标识
+        max_samples: 最大样本数（用于测试）
+        progress_interval: 进度显示间隔
+    """
+    if dataset_key not in DATASETS:
+        print(f"未知数据集: {dataset_key}")
+        print(f"可用数据集: {list(DATASETS.keys())}")
+        return
+    
+    config = DATASETS[dataset_key]
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # 输出目录
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, 'trajectory_validity_results.json')
+    
+    print(f"\n{'='*70}")
+    print(f"Trajectory Validity 评估 (LLM Judge): {config['name']}")
+    print(f"开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    if max_samples:
+        print(f"样本限制: {max_samples}")
+    else:
+        print(f"模式: 全量")
+    print(f"{'='*70}\n")
+    
+    # 导入相关模块
+    from metrics.trajectory_validity import compute_trajectory_validity
+    
+    # 加载数据
+    if dataset_key == 'mind2web':
+        from loaders import Mind2WebLoader
+        loader = Mind2WebLoader(config['data_path'])
+        print("正在解析 Mind2Web 数据...")
+        all_records = loader.parse_all(show_progress=True)
+        print(f"解析完成，共 {len(all_records)} 条记录")
+        print()
+        data_iter = iter(all_records)
+        
+    elif dataset_key == 'webshop':
+        from loaders import WebShopLoader
+        loader = WebShopLoader(config['data_path'])
+        print("正在解析 WebShop 数据...")
+        all_records = loader.parse_all(show_progress=True)
+        print(f"解析完成，共 {len(all_records)} 条记录")
+        print()
+        data_iter = iter(all_records)
+    
+    elif dataset_key == 'weblinx':
+        from loaders import WebLINXLoader
+        loader = WebLINXLoader(config['data_path'], 'train')
+        print("正在解析 WebLINX 数据...")
+        all_records = loader.parse_all(show_progress=True)
+        print(f"解析完成，共 {len(all_records)} 条记录")
+        print()
+        data_iter = iter(all_records)
+    
+    else:
+        print(f"数据集 {dataset_key} 暂不支持轨迹有效性评估")
+        return
+    
+    # 运行评估
+    results = compute_trajectory_validity(
+        data_iterator=data_iter,
+        dataset_name=config['name'],
+        output_file=output_file,
+        max_samples=max_samples,
+        progress_interval=progress_interval,
+    )
+    
+    return results
+
+
+# =============================================================================
+# Task Complexity 评估 (Target Depth)
+# =============================================================================
+
+def run_task_complexity(
+    dataset_key: str, 
+    max_samples: int = None, 
+    progress_interval: int = 100,
+):
+    """运行指定数据集的任务复杂度评估（基于 Target Depth）
+    
+    Args:
+        dataset_key: 数据集标识
+        max_samples: 最大样本数（用于测试）
+        progress_interval: 进度显示间隔
+    """
+    if dataset_key not in DATASETS:
+        print(f"未知数据集: {dataset_key}")
+        print(f"可用数据集: {list(DATASETS.keys())}")
+        return
+    
+    config = DATASETS[dataset_key]
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # 输出目录
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, 'task_complexity_results.json')
+    
+    print(f"\n{'='*70}")
+    print(f"Task Complexity 评估 (Target Depth): {config['name']}")
+    print(f"开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    if max_samples:
+        print(f"样本限制: {max_samples}")
+    else:
+        print(f"模式: 全量")
+    print(f"{'='*70}\n")
+    
+    # 导入相关模块
+    from metrics.task_complexity import compute_task_complexity
+    
+    # 加载数据和 Locator
+    if dataset_key == 'mind2web':
+        from loaders import Mind2WebLoader
+        from executor.mind2web import Mind2WebLocator
+        
+        loader = Mind2WebLoader(config['data_path'])
+        locator = Mind2WebLocator()
+        print("正在解析 Mind2Web 数据...")
+        all_records = loader.parse_all(show_progress=True)
+        print(f"解析完成，共 {len(all_records)} 条记录")
+        print()
+        data_iter = iter(all_records)
+        
+    elif dataset_key == 'weblinx':
+        from loaders import WebLINXLoader
+        from executor.weblinx import WebLINXLocator
+        
+        loader = WebLINXLoader(config['data_path'], 'train')
+        locator = WebLINXLocator()
+        print("正在解析 WebLINX 数据...")
+        all_records = loader.parse_all(show_progress=True)
+        print(f"解析完成，共 {len(all_records)} 条记录")
+        print()
+        data_iter = iter(all_records)
+    
+    else:
+        print(f"数据集 {dataset_key} 暂不支持任务复杂度评估（需要 Locator）")
+        return
+    
+    # 运行评估
+    results = compute_task_complexity(
+        data_iterator=data_iter,
+        locator=locator,
+        dataset_name=config['name'],
+        output_file=output_file,
+        max_samples=max_samples,
+        progress_interval=progress_interval,
+    )
+    
+    return results
+
+
+# =============================================================================
 # 主函数
 # =============================================================================
 
@@ -469,7 +766,7 @@ def main():
                         choices=['all'] + list(DATASETS.keys()),
                         help='要验证的数据集 (默认: mind2web)')
     parser.add_argument('--metric', '-m', type=str, default='static_executability',
-                        choices=['static_executability', 'dynamic_executability', 'format_check', 'html_retention', 'all'],
+                        choices=['static_executability', 'dynamic_executability', 'format_check', 'html_retention', 'diversity', 'trajectory_validity', 'task_complexity', 'all'],
                         help='评估指标 (默认: static_executability)')
     
     # 通用参数
@@ -534,6 +831,27 @@ def main():
         
         if args.metric in ['html_retention', 'all']:
             run_html_retention(
+                key, 
+                max_samples=args.max_samples,
+                progress_interval=args.progress_interval,
+            )
+        
+        if args.metric in ['diversity', 'all']:
+            run_diversity(
+                key, 
+                max_samples=args.max_samples,
+                progress_interval=args.progress_interval,
+            )
+        
+        if args.metric in ['trajectory_validity', 'all']:
+            run_trajectory_validity(
+                key, 
+                max_samples=args.max_samples,
+                progress_interval=args.progress_interval,
+            )
+        
+        if args.metric in ['task_complexity', 'all']:
+            run_task_complexity(
                 key, 
                 max_samples=args.max_samples,
                 progress_interval=args.progress_interval,

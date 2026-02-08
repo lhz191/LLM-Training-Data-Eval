@@ -5,6 +5,7 @@ WebLINX 数据集执行器
 
 包含:
 - WebLINXStaticChecker: 静态可执行性检查器
+- WebLINXDynamicChecker: 动态可执行性检查器
 - WebLINXFormatChecker: 格式检查器
 - WebLINXLocator: HTML 定位器
 
@@ -17,6 +18,7 @@ WebLINX 数据特点：
 
 # 导入检查器类
 from .WebLINXStaticChecker import WebLINXStaticChecker
+from .WebLINXDynamicChecker import WebLINXDynamicChecker
 from .WebLINXFormatChecker import WebLINXFormatChecker
 from .WebLINXLocator import WebLINXLocator
 
@@ -38,11 +40,22 @@ from .utils import (
     build_css_selector,
     truncated_match,
     verify_weblinx_element_match,
+    # 数据加载函数
+    load_replay,
+    get_page_path,
+    get_scroll_info,
+    read_html_file,
+    load_raw_html_for_records,
+    # 页面验证函数（Static 和 Dynamic Checker 共用）
+    get_element_info,
+    verify_by_coords,
+    verify_by_attrs,
 )
 
 __all__ = [
     # 检查器
     'WebLINXStaticChecker',
+    'WebLINXDynamicChecker',
     'WebLINXFormatChecker',
     'WebLINXLocator',
     # 常量
@@ -59,4 +72,14 @@ __all__ = [
     'build_css_selector',
     'truncated_match',
     'verify_weblinx_element_match',
+    # 数据加载函数
+    'load_replay',
+    'get_page_path',
+    'get_scroll_info',
+    'read_html_file',
+    'load_raw_html_for_records',
+    # 页面验证函数
+    'get_element_info',
+    'verify_by_coords',
+    'verify_by_attrs',
 ]

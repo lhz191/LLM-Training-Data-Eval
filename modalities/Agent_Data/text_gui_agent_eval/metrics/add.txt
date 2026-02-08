@@ -68,3 +68,22 @@ weblinx的数据质量问题：，证明单纯的按论文的步骤验证一下�
 动态网页：页面内容会变化（弹窗、下拉菜单、登录状态等）
 时间差：page 文件、bboxes 文件、candidates 可能在不同时刻收集
 结果：某些元素在 candidates 中有记录，但在对应的 page 文件中可能不存在   
+
+
+
+
+
+
+
+
+样性度量确实是一个专业领域，有很多方法：
+信息论：熵、互信息、KL 散度
+生态学：Simpson 指数、Shannon-Wiener 指数
+机器学习：Vendi Score、Self-BLEU、Distinct-n
+embedding-based：KNN 距离、聚类多样性
+当前实现作为初版已经够用：
+✅ 归一化熵（均匀度）
+✅ 有效类别数
+✅ 分布统计
+✅ 自动发现 metadata 字段
+需要调研相关专业论文后，根据需要升级。

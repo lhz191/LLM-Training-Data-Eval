@@ -223,6 +223,29 @@ class HTMLLocator(BaseHTMLLocator):
             - reason: 原因说明（如 "found", "not_found", "no_target"）
         """
         pass
+    
+    def locate_with_depth(self, action, html: str) -> Tuple[bool, int, str]:
+        """
+        定位元素并返回 DOM 深度
+        
+        用于 information_grounding 指标，评估目标元素在 DOM 树中的深度。
+        深度越大，信息越"隐藏"。
+        
+        Args:
+            action: Action 对象
+            html: HTML 字符串
+            
+        Returns:
+            (success, depth, reason) 元组
+            - success: 是否定位成功
+            - depth: DOM 深度（从根到目标的层数，-1 表示未找到）
+            - reason: 原因说明
+        """
+        # 默认实现：子类应重写此方法
+        success, reason = self.can_locate(action, html)
+        if not success:
+            return False, -1, reason
+        return True, -1, "depth_not_implemented"
 
 
 # =============================================================================

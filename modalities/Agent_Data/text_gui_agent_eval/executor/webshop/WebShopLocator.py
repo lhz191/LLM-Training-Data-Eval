@@ -75,3 +75,27 @@ class WebShopLocator(HTMLLocator):
         
         else:
             return False, f"unknown_action_type_{action_type}"
+    
+    def locate_with_depth(self, action: Action, html: str) -> tuple:
+        """
+        定位元素并返回 DOM 深度
+        
+        WebShop 的 state 是纯文本格式（[button] xxx [button_]），
+        不是真正的 HTML DOM 结构。信息直接展示，没有嵌套，
+        因此默认认为是"浮于表面"，返回深度 1。
+        
+        Args:
+            action: Action 对象
+            html: state 文本
+            
+        Returns:
+            (success, depth, reason)
+            - depth 返回 1，表示信息浮于表面
+        """
+        can_locate_result, reason = self.can_locate(action, html)
+        
+        if not can_locate_result:
+            return False, -1, reason
+        
+        # WebShop 是文本格式，信息直接暴露，默认浮于表面
+        return True, 1, "text_format_surface"

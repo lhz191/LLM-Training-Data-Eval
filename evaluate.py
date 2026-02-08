@@ -62,7 +62,7 @@ MODALITIES = {
         'name': 'GUI Agent',
         'module': 'modalities.Agent_Data.text_gui_agent_eval.scripts.run_full_test',
         'datasets': ['mind2web', 'webshop', 'weblinx'],
-        'metrics': ['format_check', 'static_executability', 'dynamic_executability', 'html_retention'],
+        'metrics': ['format_check', 'static_executability', 'dynamic_executability', 'html_retention', 'diversity', 'trajectory_validity', 'task_complexity'],
     },
     'math': {
         'name': 'Math/Symbolic',

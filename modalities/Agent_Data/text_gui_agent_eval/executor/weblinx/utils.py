@@ -89,6 +89,10 @@ def parse_weblinx_candidate(candidate: dict) -> dict:
     if not candidate:
         return {}
     
+    # 如果是字符串，无法解析，返回空
+    if isinstance(candidate, str):
+        return {}
+    
     result = {
         'tag': (candidate.get('tag') or '').lower(),
         'bbox': None,
@@ -159,13 +163,31 @@ def parse_weblinx_candidate(candidate: dict) -> dict:
     return result
 
 
-def find_candidate_by_uid(candidates: list, target_uid: str) -> Optional[dict]:
-    """根据 uid 在 candidates 中找到目标元素"""
+def find_candidate_by_uid(target_uid: str, candidates: list) -> Optional[dict]:
+    """
+    根据 uid 在 candidates 中找到目标元素
+    
+    Args:
+        target_uid: 目标元素的 UID
+        candidates: candidates 列表（可以是字符串列表或已解析的字典列表）
+        
+    Returns:
+        解析后的元素信息字典，或 None
+    """
     if not candidates or not target_uid:
         return None
+    
     for cand in candidates:
-        if cand.get('uid') == target_uid:
-            return cand
+        # 如果是字符串，跳过（无法解析）
+        if isinstance(cand, str):
+            continue
+        
+        # 检查 uid（loader 格式）或 data_webtasks_id（parse_weblinx_candidate 格式）
+        cand_uid = cand.get('uid') or cand.get('data_webtasks_id')
+        if cand_uid == target_uid:
+            # 返回 parse_weblinx_candidate 格式（统一格式）
+            return parse_weblinx_candidate(cand)
+    
     return None
 
 
@@ -461,7 +483,10 @@ def verify_weblinx_element_match(page, element_handle, expected_info: dict, skip
                 matched_count += 1
                 matches.append(f"{attr_name}: ✓")
             else:
-                mismatches.append(f"{attr_name}: 期望 '{expected_val}', 实际 '{actual_val or '无'}' ✗")
+                # 截断长字符串避免刷屏
+                exp_short = expected_val[:50] + '...' if len(expected_val) > 50 else expected_val
+                act_short = (actual_val[:50] + '...') if actual_val and len(actual_val) > 50 else (actual_val or '无')
+                mismatches.append(f"{attr_name}: 期望 '{exp_short}', 实际 '{act_short}' ✗")
     
     # 0. 验证 tag
     expected_tag = expected_info.get('tag', '').lower()
@@ -549,7 +574,10 @@ def verify_weblinx_element_match(page, element_handle, expected_info: dict, skip
             matched_count += 1
             matches.append(f"xpath: ✓")
         else:
-            mismatches.append(f"xpath: 期望 '{expected_xpath}', 实际 '{actual_xpath}' ✗")
+            # 截断长 xpath 避免刷屏
+            exp_short = expected_xpath[:80] + '...' if len(expected_xpath) > 80 else expected_xpath
+            act_short = actual_xpath[:80] + '...' if len(actual_xpath) > 80 else actual_xpath
+            mismatches.append(f"xpath: 期望 '{exp_short}', 实际 '{act_short}' ✗")
     
     # 18. 验证 text_content（可能被截断）
     expected_text = (expected_info.get('text_content', '') or '').strip()
@@ -560,7 +588,10 @@ def verify_weblinx_element_match(page, element_handle, expected_info: dict, skip
             matched_count += 1
             matches.append(f"text: ✓")
         else:
-            mismatches.append(f"text: 期望 '{expected_text}', 实际 '{actual_text or '无'}' ✗")
+            # 截断长 text 避免刷屏
+            exp_short = expected_text[:50] + '...' if len(expected_text) > 50 else expected_text
+            act_short = (actual_text[:50] + '...') if actual_text and len(actual_text) > 50 else (actual_text or '无')
+            mismatches.append(f"text: 期望 '{exp_short}', 实际 '{act_short}' ✗")
     
     # 注意：uid (data-webtasks-id) 不在这里验证，因为它是独立的指标
     
@@ -574,3 +605,599 @@ def verify_weblinx_element_match(page, element_handle, expected_info: dict, skip
     else:
         reason = "; ".join(mismatches)
         return False, reason, matched_count, total_count
+
+
+# =============================================================================
+# 数据加载函数（与 WebLINXStaticChecker 共用）
+# =============================================================================
+
+def load_replay(raw_data_path: str, demo_name: str, cache: Optional[Dict] = None) -> Optional[Dict]:
+    """
+    加载指定 demo 的 replay.json
+    
+    Args:
+        raw_data_path: raw_data 根路径（包含 demonstrations/）
+        demo_name: demo ID（如 'cptbbef'）
+        cache: 可选的缓存字典，用于避免重复加载
+        
+    Returns:
+        replay.json 的内容，或 None
+    """
+    import os
+    import json
+    
+    # 使用缓存
+    if cache is not None and demo_name in cache:
+        return cache[demo_name]
+    
+    replay_path = os.path.join(raw_data_path, 'demonstrations', demo_name, 'replay.json')
+    if not os.path.exists(replay_path):
+        if cache is not None:
+            cache[demo_name] = None
+        return None
+    
+    try:
+        with open(replay_path, 'r', encoding='utf-8') as f:
+            replay = json.load(f)
+        if cache is not None:
+            cache[demo_name] = replay
+        return replay
+    except Exception:
+        if cache is not None:
+            cache[demo_name] = None
+        return None
+
+
+def get_page_path(raw_data_path: str, demo_name: str, turn_idx: int, 
+                  replay_cache: Optional[Dict] = None) -> Optional[str]:
+    """
+    获取指定 turn 对应的 page 文件路径
+    
+    Args:
+        raw_data_path: raw_data 根路径
+        demo_name: demo ID
+        turn_idx: turn 索引
+        replay_cache: 可选的 replay.json 缓存
+        
+    Returns:
+        page 文件的完整路径，或 None
+    """
+    import os
+    
+    replay = load_replay(raw_data_path, demo_name, replay_cache)
+    if not replay:
+        return None
+    
+    turns = replay.get('data', [])
+    if turn_idx >= len(turns):
+        return None
+    
+    turn = turns[turn_idx]
+    state = turn.get('state', {})
+    page = state.get('page')
+    
+    if not page:
+        return None
+    
+    page_path = os.path.join(raw_data_path, 'demonstrations', demo_name, 'pages', page)
+    if os.path.exists(page_path):
+        return page_path
+    return None
+
+
+def get_scroll_info(raw_data_path: str, demo_name: str, turn_idx: int,
+                    replay_cache: Optional[Dict] = None) -> Tuple[float, float]:
+    """
+    从 replay.json 获取滚动信息
+    
+    WebLINX 的 bbox 是视口坐标，需要通过 pageY - clientY 计算滚动偏移
+    
+    Args:
+        raw_data_path: raw_data 根路径
+        demo_name: demo ID
+        turn_idx: turn 索引
+        replay_cache: 可选的 replay.json 缓存
+        
+    Returns:
+        (scroll_x, scroll_y) 滚动偏移，如果无法获取则返回 (0, 0)
+    """
+    replay = load_replay(raw_data_path, demo_name, replay_cache)
+    if not replay:
+        return 0.0, 0.0
+    
+    turns = replay.get('data', [])
+    if turn_idx >= len(turns):
+        return 0.0, 0.0
+    
+    turn = turns[turn_idx]
+    action = turn.get('action', {})
+    if not isinstance(action, dict):
+        return 0.0, 0.0
+    
+    args = action.get('arguments', {})
+    props = args.get('properties', {})
+    
+    page_x = props.get('pageX', 0)
+    page_y = props.get('pageY', 0)
+    client_x = props.get('clientX', 0)
+    client_y = props.get('clientY', 0)
+    
+    scroll_x = page_x - client_x
+    scroll_y = page_y - client_y
+    
+    return scroll_x, scroll_y
+
+
+def read_html_file(path: str) -> str:
+    """
+    读取 HTML 文件，尝试多种编码
+    
+    Args:
+        path: HTML 文件路径
+        
+    Returns:
+        HTML 内容，读取失败返回空字符串
+    """
+    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+    for encoding in encodings:
+        try:
+            with open(path, 'r', encoding=encoding) as f:
+                return f.read()
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return ''
+
+
+def load_raw_html_for_records(records: List, raw_data_path: str, show_progress: bool = True):
+    """
+    为 WebLINX records 加载 raw_html
+    
+    WebLINX 的 raw_html 存储在 pages/*.html 文件中，需要从 replay.json 获取文件名
+    
+    Args:
+        records: Record 列表
+        raw_data_path: raw_data 根路径（包含 demonstrations/）
+        show_progress: 是否显示进度条
+    
+    Returns:
+        (loaded_count, failed_count) 加载成功和失败的数量
+    """
+    # 可选的进度条
+    if show_progress:
+        try:
+            from tqdm import tqdm
+            records_iter = tqdm(records, desc="Loading raw_html")
+        except ImportError:
+            records_iter = records
+    else:
+        records_iter = records
+    
+    # 缓存 replay.json
+    replay_cache = {}
+    
+    # 统计
+    total_actions = sum(len(r.actions) for r in records)
+    loaded_count = 0
+    failed_count = 0
+    
+    # 遍历所有 records 和 actions
+    for record in records_iter:
+        # WebLINX 的真实 demo_id 存储在 metadata 中
+        demo_name = record.metadata.get('demo_id') if record.metadata else None
+        if not demo_name:
+            # 所有 actions 都标记为失败
+            failed_count += len(record.actions)
+            continue
+        
+        for action in record.actions:
+            # 从 metadata 获取 turn_idx
+            turn_idx = action.metadata.get('turn', 0) if action.metadata else 0
+            
+            page_path = get_page_path(raw_data_path, demo_name, turn_idx, replay_cache)
+            if page_path:
+                raw_html = read_html_file(page_path)
+                if raw_html:
+                    action.raw_html = raw_html
+                    loaded_count += 1
+                else:
+                    failed_count += 1
+            else:
+                failed_count += 1
+    
+    return loaded_count, failed_count
+
+
+# =============================================================================
+# 页面验证函数（Static 和 Dynamic Checker 共用）
+# =============================================================================
+
+def get_element_info(page, element) -> Dict:
+    """
+    获取元素的详细信息
+    
+    Args:
+        page: Playwright page 对象
+        element: 元素句柄
+        
+    Returns:
+        元素信息字典
+    """
+    try:
+        info = page.evaluate("""(el) => {
+            if (!el || !el.tagName) return {};
+            const rect = el.getBoundingClientRect();
+            return {
+                tag: el.tagName.toLowerCase(),
+                uid: el.getAttribute('data-webtasks-id') || '',
+                id: el.id || '',
+                className: el.className || '',
+                text: (el.textContent || '').replace(/\\s+/g, ' ').trim().substring(0, 200),
+                type: el.type || '',
+                placeholder: el.placeholder || '',
+                value: el.value || '',
+                name: el.name || '',
+                role: el.getAttribute('role') || '',
+                ariaLabel: el.getAttribute('aria-label') || '',
+                href: el.getAttribute('href') || '',
+                bbox: {x: rect.x, y: rect.y, width: rect.width, height: rect.height},
+                visible: el.offsetParent !== null,
+            };
+        }""", element)
+        return info or {}
+    except:
+        return {}
+
+
+def verify_by_coords(
+    page, 
+    element_data: Dict,
+    scroll_x: float = 0,
+    scroll_y: float = 0,
+    verbose: bool = True,
+) -> Tuple[bool, str, Dict, Any]:
+    """
+    通过坐标定位验证元素（公共函数）
+    
+    WebLINX 的 bbox 是视口坐标，需要先滚动到正确位置后再用 elementsFromPoint 定位。
+    
+    定位策略：
+    1. 滚动到数据收集时的位置
+    2. 用 3 个检测点（左上、中心、右下）获取元素栈
+    3. 遍历元素栈，验证属性是否匹配
+    4. 如果顶层元素不匹配，搜索其子元素（有 5px 尺寸阈值过滤）
+    
+    注意：这是独立的指标，不涉及 UID 验证！
+    
+    Args:
+        page: Playwright page 对象
+        element_data: 元素信息（来自 parse_weblinx_candidate，包含 bbox、tag、class 等）
+        scroll_x, scroll_y: 滚动偏移（从 replay.json 获取）
+        verbose: 是否打印详细信息
+        
+    Returns:
+        (success, reason, element_info, element_handle)
+    """
+    if not element_data:
+        return False, "no_element_data", {}, None
+    
+    bbox = element_data.get('bbox')
+    if not bbox:
+        return False, "no_bbox", {}, None
+    
+    # 滚动到数据收集时的位置
+    if scroll_y != 0 or scroll_x != 0:
+        try:
+            page.evaluate(f"window.scrollTo({scroll_x}, {scroll_y})")
+            page.wait_for_timeout(300)
+            if verbose:
+                print(f"    [滚动] 已滚动到 scrollY={scroll_y:.0f}")
+        except Exception as e:
+            if verbose:
+                print(f"    [滚动] 滚动失败: {e}")
+    
+    expected_tag = element_data.get('tag', '')
+    expected_w = bbox.get('width', 0)
+    expected_h = bbox.get('height', 0)
+    expected_cx = bbox.get('x', 0) + expected_w / 2
+    expected_cy = bbox.get('y', 0) + expected_h / 2
+    
+    # 定义 3 个检测点：左上、中心、右下
+    check_points = [
+        ('左上', bbox.get('x', 0), bbox.get('y', 0)),
+        ('中心', expected_cx, expected_cy),
+        ('右下', bbox.get('x', 0) + expected_w, bbox.get('y', 0) + expected_h),
+    ]
+    
+    last_top_element = None
+    
+    try:
+        # 遍历 3 个检测点
+        for point_name, target_x, target_y in check_points:
+            # 用 elementsFromPoint 获取该坐标下所有层叠元素
+            all_elements = page.evaluate(f"""() => {{
+                const elements = document.elementsFromPoint({target_x}, {target_y});
+                return elements.map((el, idx) => ({{
+                    index: idx,
+                    tag: el.tagName.toLowerCase(),
+                    id: el.id || '',
+                    className: (el.className || '').toString().substring(0, 100),
+                    rect: (() => {{
+                        const r = el.getBoundingClientRect();
+                        return {{x: r.x, y: r.y, width: r.width, height: r.height}};
+                    }})()
+                }}));
+            }}""")
+            
+            if not all_elements:
+                continue
+            
+            # 遍历所有层叠元素
+            for elem_info in all_elements:
+                elem_idx = elem_info['index']
+                
+                # 获取元素句柄
+                element = page.evaluate_handle(f"""() => {{
+                    const elements = document.elementsFromPoint({target_x}, {target_y});
+                    return elements[{elem_idx}];
+                }}""")
+                
+                # 检查 null 或 undefined
+                is_invalid = page.evaluate("(el) => el === null || el === undefined || !el", element)
+                if is_invalid:
+                    continue
+                
+                last_top_element = element
+                
+                # 使用 verify_weblinx_element_match 验证属性是否匹配
+                if element_data:
+                    is_match, reason, matched, total = verify_weblinx_element_match(page, element, element_data)
+                    if is_match:
+                        if verbose:
+                            print(f"    ✓ [{point_name}] 第{elem_idx}层元素直接匹配成功 ({matched}/{total})")
+                            for attr_info in reason.split('; '):
+                                if attr_info.strip():
+                                    print(f"      {attr_info}")
+                        try:
+                            page.evaluate("(el) => el.style.border='3px solid green'", element)
+                        except:
+                            pass
+                        element_info = get_element_info(page, element)
+                        return True, f"success@{point_name}_layer{elem_idx} ({matched}/{total})", element_info, element
+                
+                # 搜索子元素（如果有期望的 tag）
+                if expected_tag:
+                    children_info = page.evaluate(f"""(el) => {{
+                        const tag = '{expected_tag}';
+                        const children = el.querySelectorAll(tag);
+                        const results = [];
+                        
+                        for (let i = 0; i < children.length && i < 500; i++) {{
+                            const child = children[i];
+                            const rect = child.getBoundingClientRect();
+                            
+                            if (rect.width > 0 && rect.height > 0) {{
+                                results.push({{
+                                    index: i,
+                                    rect: {{x: rect.x, y: rect.y, width: rect.width, height: rect.height}}
+                                }});
+                            }}
+                        }}
+                        return results;
+                    }}""", element)
+                    
+                    if not children_info:
+                        continue
+                    
+                    # 找最佳匹配的子元素（按大小和位置）
+                    best_match_idx = -1
+                    best_score = float('inf')
+                    
+                    for child in children_info:
+                        rect = child['rect']
+                        size_diff = abs(rect['width'] - expected_w) + abs(rect['height'] - expected_h)
+                        child_cx = rect['x'] + rect['width'] / 2
+                        child_cy = rect['y'] + rect['height'] / 2
+                        pos_diff = ((child_cx - expected_cx)**2 + (child_cy - expected_cy)**2)**0.5
+                        score = size_diff * 2 + pos_diff
+                        
+                        if score < best_score:
+                            best_score = score
+                            best_match_idx = child['index']
+                    
+                    if best_match_idx < 0:
+                        continue
+                    
+                    best_child = page.evaluate_handle(f"""(el) => {{
+                        const children = el.querySelectorAll('{expected_tag}');
+                        return children[{best_match_idx}];
+                    }}""", element)
+                    
+                    best_rect = page.evaluate("""(el) => {
+                        const rect = el.getBoundingClientRect();
+                        return {x: rect.x, y: rect.y, width: rect.width, height: rect.height};
+                    }""", best_child)
+                    
+                    # 5px 尺寸阈值过滤
+                    size_diff = abs(best_rect['width'] - expected_w) + abs(best_rect['height'] - expected_h)
+                    
+                    if size_diff > 5:
+                        continue
+                    
+                    if element_data:
+                        is_match, reason, matched, total = verify_weblinx_element_match(page, best_child, element_data)
+                        if is_match:
+                            if verbose:
+                                print(f"    ✓ [{point_name}] 第{elem_idx}层的子元素匹配成功 ({matched}/{total})")
+                                for attr_info in reason.split('; '):
+                                    if attr_info.strip():
+                                        print(f"      {attr_info}")
+                            try:
+                                page.evaluate("(el) => el.style.border='3px solid green'", best_child)
+                            except:
+                                pass
+                            element_info = get_element_info(page, best_child)
+                            return True, f"success_child@{point_name}_layer{elem_idx}[{best_match_idx}] ({matched}/{total})", element_info, best_child
+        
+        # 所有点都失败
+        if last_top_element:
+            is_match, reason, matched, total = verify_weblinx_element_match(page, last_top_element, element_data)
+            top_info = page.evaluate("""(el) => ({
+                tag: el.tagName.toLowerCase(),
+                rect: el.getBoundingClientRect()
+            })""", last_top_element)
+            if verbose:
+                print(f"    ✗ 3个检测点都未找到匹配元素")
+                print(f"    [顶层元素] <{top_info['tag']}> @ ({top_info['rect']['x']:.0f},{top_info['rect']['y']:.0f})")
+                if reason:
+                    print(f"    ✗ 属性不匹配 ({matched}/{total}):")
+                    for attr_info in reason.split('; '):
+                        if attr_info.strip():
+                            print(f"      {attr_info}")
+            try:
+                page.evaluate("(el) => el.style.border='3px solid orange'", last_top_element)
+            except:
+                pass
+            element_info = get_element_info(page, last_top_element)
+            return False, f"no_match ({matched}/{total})", element_info, last_top_element
+        else:
+            if verbose:
+                print(f"    ✗ 未找到元素")
+            return False, "element_not_found_at_coords", {}, None
+            
+    except Exception as e:
+        if verbose:
+            print(f"    ✗ 坐标定位错误: {e}")
+        return False, f"coord_error: {str(e)}", {}, None
+
+
+def verify_by_attrs(
+    page,
+    element_data: Dict,
+    bbox: Dict = None,
+    scroll_x: float = 0,
+    scroll_y: float = 0,
+    verbose: bool = True,
+) -> Tuple[bool, str, Dict, Any]:
+    """
+    通过属性定位验证元素（公共函数）
+    
+    定位策略：
+    1. 用 CSS 选择器找元素
+    2. 逐个验证所有属性（包括 xpath 和 text）
+    3. 找到第一个验证通过的就返回成功
+    
+    Args:
+        page: Playwright page 对象
+        element_data: 元素信息（来自 parse_weblinx_candidate）
+        bbox: 目标元素的边界框（用于多匹配时选择最近的）
+        scroll_x, scroll_y: 滚动偏移（从 replay.json 获取）
+        verbose: 是否打印详细信息
+        
+    Returns:
+        (success, reason, element_info, element_handle)
+    """
+    if not element_data:
+        if verbose:
+            print(f"    ❌ 无元素信息（数据集缺失）")
+        return False, "no_element_data", {}, None
+    
+    # element_data 已经是解析后的格式（来自 parse_weblinx_candidate）
+    tag_name = element_data.get('tag', '')
+    
+    # 获取 bbox（用于多匹配时选择）
+    if bbox is None:
+        bbox = element_data.get('bbox')
+    
+    # 如果有 bbox 用于坐标筛选，需要先滚动到正确位置
+    if bbox and (scroll_y != 0 or scroll_x != 0):
+        try:
+            page.evaluate(f"window.scrollTo({scroll_x}, {scroll_y})")
+            page.wait_for_timeout(300)
+        except:
+            pass
+    
+    # 用 CSS 选择器找元素
+    selector, desc = build_css_selector(element_data)
+    
+    if not selector:
+        if verbose:
+            print(f"    ✗ 没有可用属性构建 CSS 选择器")
+        return False, "no_css_selector", {'tag': tag_name}, None
+    
+    # 简化过长的选择器显示
+    if verbose:
+        if len(selector) > 80:
+            print(f"    [CSS选择器] {desc}")
+        else:
+            print(f"    [CSS选择器] {selector}")
+    
+    try:
+        elements = page.query_selector_all(selector)
+    except Exception as e:
+        if verbose:
+            print(f"    ✗ CSS 选择器错误: {str(e)}")
+        return False, f"css_error: {str(e)}", {'tag': tag_name}, None
+    
+    if not elements:
+        if verbose:
+            print(f"    ✗ 未找到元素")
+        return False, "css_not_found", {'tag': tag_name}, None
+    
+    # 如果多个元素，按坐标距离排序
+    if len(elements) > 1 and bbox:
+        target_x = bbox['x'] + bbox['width'] / 2
+        target_y = bbox['y'] + bbox['height'] / 2
+        
+        def get_distance(e):
+            try:
+                rect = e.bounding_box()
+                if rect:
+                    elem_cx = rect['x'] + rect['width'] / 2
+                    elem_cy = rect['y'] + rect['height'] / 2
+                    return ((elem_cx - target_x) ** 2 + (elem_cy - target_y) ** 2) ** 0.5
+            except:
+                pass
+            return float('inf')
+        
+        elements = sorted(elements, key=get_distance)
+    
+    # 多元素时提示
+    if verbose and len(elements) > 1:
+        print(f"    找到 {len(elements)} 个候选，按坐标距离排序验证")
+    
+    # 逐个验证，找到第一个通过验证的
+    fail_reasons = []  # 收集失败原因
+    for i, element in enumerate(elements):
+        is_match, reason, matched, total = verify_weblinx_element_match(page, element, element_data)
+        
+        if is_match:
+            element_info = get_element_info(page, element)
+            if verbose:
+                if len(elements) == 1:
+                    print(f"    ✓ 匹配成功 ({matched}/{total})")
+                else:
+                    print(f"    ✓ 第{i+1}个元素匹配成功 ({matched}/{total})")
+                # 打印匹配的属性详情
+                for attr_info in reason.split('; '):
+                    if attr_info.strip():
+                        print(f"      {attr_info}")
+            return True, f"match ({matched}/{total})", element_info, element
+        else:
+            # 记录失败原因
+            fail_reasons.append((i + 1, reason, matched, total))
+    
+    # 所有元素都验证失败
+    element_info = get_element_info(page, elements[0]) if elements else {}
+    if verbose:
+        print(f"    ✗ 所有 {len(elements)} 个候选元素验证失败")
+        # 打印每个元素的失败原因（最多显示前 3 个）
+        for idx, reason, matched, total in fail_reasons[:3]:
+            print(f"      - 元素{idx}: ({matched}/{total})")
+            for attr_info in reason.split('; '):
+                if attr_info.strip():
+                    print(f"        {attr_info}")
+        if len(fail_reasons) > 3:
+            print(f"      ... 还有 {len(fail_reasons) - 3} 个元素失败")
+    return False, "all_verify_failed", element_info, None
+
+

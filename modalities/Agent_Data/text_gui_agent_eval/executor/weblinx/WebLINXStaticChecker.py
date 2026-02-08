@@ -20,6 +20,13 @@ from .utils import (
     find_candidate_by_uid,
     build_css_selector,
     verify_weblinx_element_match,
+    get_element_info,
+    verify_by_coords,
+    verify_by_attrs,
+    # 数据加载函数（共用）
+    load_replay,
+    get_page_path,
+    get_scroll_info,
 )
 
 try:
@@ -112,424 +119,16 @@ class WebLINXStaticChecker:
             self._playwright = None
     
     def _load_replay(self, demo_name: str) -> Optional[dict]:
-        """加载指定 demo 的 replay.json（带缓存）"""
-        if demo_name in self._replay_cache:
-            return self._replay_cache[demo_name]
-        
-        replay_path = os.path.join(self.raw_data_path, 'demonstrations', demo_name, 'replay.json')
-        if not os.path.exists(replay_path):
-            return None
-        
-        try:
-            with open(replay_path) as f:
-                replay = json.load(f)
-            self._replay_cache[demo_name] = replay
-            return replay
-        except Exception as e:
-            print(f"⚠️ Failed to load replay.json for {demo_name}: {e}")
-            return None
+        """加载指定 demo 的 replay.json（带缓存）- 使用共用函数"""
+        return load_replay(self.raw_data_path, demo_name, self._replay_cache)
     
     def _get_page_path(self, demo_name: str, turn_idx: int) -> Optional[str]:
-        """获取指定 turn 对应的 page 文件路径"""
-        replay = self._load_replay(demo_name)
-        if not replay:
-            return None
-        
-        turns = replay.get('data', [])
-        if turn_idx >= len(turns):
-            return None
-        
-        turn = turns[turn_idx]
-        state = turn.get('state', {})
-        page = state.get('page')
-        
-        if not page:
-            return None
-        
-        page_path = os.path.join(self.raw_data_path, 'demonstrations', demo_name, 'pages', page)
-        if os.path.exists(page_path):
-            return page_path
-        return None
+        """获取指定 turn 对应的 page 文件路径 - 使用共用函数"""
+        return get_page_path(self.raw_data_path, demo_name, turn_idx, self._replay_cache)
     
     def _get_scroll_info(self, demo_name: str, turn_idx: int) -> Tuple[float, float]:
-        """
-        从 replay.json 获取滚动信息
-        
-        WebLINX 的 bbox 是视口坐标，需要通过 pageY - clientY 计算滚动偏移
-        
-        Args:
-            demo_name: demo ID
-            turn_idx: turn 索引
-            
-        Returns:
-            (scroll_x, scroll_y) 滚动偏移，如果无法获取则返回 (0, 0)
-        """
-        replay = self._load_replay(demo_name)
-        if not replay:
-            return 0.0, 0.0
-        
-        turns = replay.get('data', [])
-        if turn_idx >= len(turns):
-            return 0.0, 0.0
-        
-        turn = turns[turn_idx]
-        action = turn.get('action', {})
-        if not isinstance(action, dict):
-            return 0.0, 0.0
-        
-        args = action.get('arguments', {})
-        props = args.get('properties', {})
-        
-        page_x = props.get('pageX', 0)
-        page_y = props.get('pageY', 0)
-        client_x = props.get('clientX', 0)
-        client_y = props.get('clientY', 0)
-        
-        scroll_x = page_x - client_x
-        scroll_y = page_y - client_y
-        
-        return scroll_x, scroll_y
-    
-    def _verify_by_coords(
-        self, 
-        element_data: dict = None,
-        demo_name: str = None,
-        turn_idx: int = -1,
-    ) -> Tuple[bool, str, dict, any]:
-        """
-        通过坐标定位验证元素（类似 Mind2Web）
-        
-        WebLINX 的 bbox 是视口坐标，需要先从 replay.json 获取滚动偏移，
-        滚动到正确位置后再用 elementsFromPoint 定位。
-        
-        注意：这是独立的指标，不涉及 UID 验证！
-        
-        Args:
-            element_data: 元素信息（来自 parse_weblinx_candidate，包含 bbox、tag、class 等）
-            demo_name: demo ID（用于获取滚动信息）
-            turn_idx: turn 索引（用于获取滚动信息）
-            
-        Returns:
-            (success, reason, element_info, element_handle)
-        """
-        if not element_data:
-            return False, "no_element_data", {}, None
-        
-        # 获取 bbox
-        bbox = element_data.get('bbox')
-        if not bbox:
-            return False, "no_bbox", {}, None
-        
-        # 从 replay.json 获取滚动信息
-        scroll_x, scroll_y = self._get_scroll_info(demo_name, turn_idx)
-        
-        # 先滚动到数据收集时的位置
-        if scroll_y != 0 or scroll_x != 0:
-            try:
-                self._page.evaluate(f"window.scrollTo({scroll_x}, {scroll_y})")
-                self._page.wait_for_timeout(300)  # 等待滚动完成
-                print(f"    [滚动] 已滚动到 scrollY={scroll_y:.0f} (从 replay.json 获取)")
-            except Exception as e:
-                print(f"    [滚动] 滚动失败: {e}")
-        
-        expected_tag = element_data.get('tag', '')
-        expected_w = bbox.get('width', 0)
-        expected_h = bbox.get('height', 0)
-        expected_cx = bbox.get('x', 0) + expected_w / 2
-        expected_cy = bbox.get('y', 0) + expected_h / 2
-        
-        # 定义 3 个检测点：左上、中心、右下
-        check_points = [
-            ('左上', bbox.get('x', 0), bbox.get('y', 0)),
-            ('中心', expected_cx, expected_cy),
-            ('右下', bbox.get('x', 0) + expected_w, bbox.get('y', 0) + expected_h),
-        ]
-        
-        last_top_element = None
-        
-        try:
-            # 遍历 3 个检测点
-            for point_name, target_x, target_y in check_points:
-                # 用 elementsFromPoint 获取该坐标下所有层叠元素
-                all_elements = self._page.evaluate(f"""() => {{
-                    const elements = document.elementsFromPoint({target_x}, {target_y});
-                    return elements.map((el, idx) => ({{
-                        index: idx,
-                        tag: el.tagName.toLowerCase(),
-                        id: el.id || '',
-                        className: (el.className || '').toString().substring(0, 100),
-                        rect: (() => {{
-                            const r = el.getBoundingClientRect();
-                            return {{x: r.x, y: r.y, width: r.width, height: r.height}};
-                        }})()
-                    }}));
-                }}""")
-                
-                if not all_elements:
-                    continue
-                
-                # 遍历所有层叠元素
-                for elem_info in all_elements:
-                    elem_idx = elem_info['index']
-                    
-                    # 获取元素句柄
-                    element = self._page.evaluate_handle(f"""() => {{
-                        const elements = document.elementsFromPoint({target_x}, {target_y});
-                        return elements[{elem_idx}];
-                    }}""")
-                    
-                    # 检查 null 或 undefined
-                    is_invalid = self._page.evaluate("(el) => el === null || el === undefined || !el", element)
-                    if is_invalid:
-                        continue
-                    
-                    last_top_element = element
-                    
-                    # 使用 verify_weblinx_element_match 验证属性是否匹配
-                    if element_data:
-                        is_match, reason, matched, total = verify_weblinx_element_match(self._page, element, element_data)
-                        if is_match:
-                            print(f"    [{point_name}] 第{elem_idx}层元素直接匹配成功")
-                            print(f"    ✓ 匹配成功 ({matched}/{total}): {reason}")
-                            try:
-                                self._page.evaluate("(el) => el.style.border='3px solid green'", element)
-                            except:
-                                pass
-                            element_info = self._get_element_info(element)
-                            return True, f"success@{point_name}_layer{elem_idx} ({matched}/{total})", element_info, element
-                    
-                    # 搜索子元素（如果有期望的 tag）
-                    if expected_tag:
-                        children_info = self._page.evaluate(f"""(el) => {{
-                            const tag = '{expected_tag}';
-                            const children = el.querySelectorAll(tag);
-                            const results = [];
-                            
-                            for (let i = 0; i < children.length && i < 500; i++) {{
-                                const child = children[i];
-                                const rect = child.getBoundingClientRect();
-                                
-                                if (rect.width > 0 && rect.height > 0) {{
-                                    results.push({{
-                                        index: i,
-                                        rect: {{x: rect.x, y: rect.y, width: rect.width, height: rect.height}}
-                                    }});
-                                }}
-                            }}
-                            return results;
-                        }}""", element)
-                        
-                        if not children_info:
-                            continue
-                        
-                        # 找最佳匹配的子元素（按大小和位置）
-                        best_match_idx = -1
-                        best_score = float('inf')
-                        
-                        for child in children_info:
-                            rect = child['rect']
-                            size_diff = abs(rect['width'] - expected_w) + abs(rect['height'] - expected_h)
-                            child_cx = rect['x'] + rect['width'] / 2
-                            child_cy = rect['y'] + rect['height'] / 2
-                            pos_diff = ((child_cx - expected_cx)**2 + (child_cy - expected_cy)**2)**0.5
-                            score = size_diff * 2 + pos_diff
-                            
-                            if score < best_score:
-                                best_score = score
-                                best_match_idx = child['index']
-                        
-                        if best_match_idx < 0:
-                            continue
-                        
-                        best_child = self._page.evaluate_handle(f"""(el) => {{
-                            const children = el.querySelectorAll('{expected_tag}');
-                            return children[{best_match_idx}];
-                        }}""", element)
-                        
-                        best_rect = self._page.evaluate("""(el) => {
-                            const rect = el.getBoundingClientRect();
-                            return {x: rect.x, y: rect.y, width: rect.width, height: rect.height};
-                        }""", best_child)
-                        
-                        size_diff = abs(best_rect['width'] - expected_w) + abs(best_rect['height'] - expected_h)
-                        
-                        if size_diff > 5:
-                            continue
-                        
-                        if element_data:
-                            is_match, reason, matched, total = verify_weblinx_element_match(self._page, best_child, element_data)
-                            if is_match:
-                                print(f"    [{point_name}] 第{elem_idx}层的子元素匹配成功")
-                                print(f"    ✓ 匹配成功 ({matched}/{total}): {reason}")
-                                try:
-                                    self._page.evaluate("(el) => el.style.border='3px solid green'", best_child)
-                                except:
-                                    pass
-                                element_info = self._get_element_info(best_child)
-                                return True, f"success_child@{point_name}_layer{elem_idx}[{best_match_idx}] ({matched}/{total})", element_info, best_child
-            
-            # 所有点都失败
-            if last_top_element:
-                top_info = self._page.evaluate("""(el) => ({
-                    tag: el.tagName.toLowerCase(),
-                    rect: el.getBoundingClientRect()
-                })""", last_top_element)
-                print(f"    ✗ 3个检测点都未找到匹配元素")
-                print(f"    [顶层元素] <{top_info['tag']}> @ ({top_info['rect']['x']:.0f},{top_info['rect']['y']:.0f})")
-                try:
-                    self._page.evaluate("(el) => el.style.border='3px solid orange'", last_top_element)
-                except:
-                    pass
-                element_info = self._get_element_info(last_top_element)
-                return False, "no_match_all_points", element_info, last_top_element
-            else:
-                print(f"    ✗ 未找到元素")
-                return False, "element_not_found_at_coords", {}, None
-                
-        except Exception as e:
-            print(f"    ✗ 坐标定位错误: {e}")
-            return False, f"coord_error: {str(e)}", {}, None
-    
-    def _get_element_info(self, element) -> dict:
-        """获取元素的详细信息（不截断任何字段）"""
-        try:
-            info = self._page.evaluate("""(el) => {
-                if (!el || !el.tagName) return {};
-                const rect = el.getBoundingClientRect();
-                return {
-                    tag: el.tagName.toLowerCase(),
-                    uid: el.getAttribute('data-webtasks-id') || '',
-                    id: el.id || '',
-                    className: el.className || '',
-                    text: (el.textContent || '').replace(/\\s+/g, ' ').trim(),
-                    type: el.type || '',
-                    placeholder: el.placeholder || '',
-                    value: el.value || '',
-                    name: el.name || '',
-                    role: el.getAttribute('role') || '',
-                    ariaLabel: el.getAttribute('aria-label') || '',
-                    href: el.getAttribute('href') || '',
-                    bbox: {x: rect.x, y: rect.y, width: rect.width, height: rect.height},
-                    visible: el.offsetParent !== null,
-                };
-            }""", element)
-            return info or {}
-        except:
-            return {}
-    
-    def _verify_by_attrs(
-        self, 
-        element_data: dict = None, 
-        bbox: dict = None,
-        demo_name: str = None,
-        turn_idx: int = -1,
-    ) -> Tuple[bool, str, dict, any]:
-        """
-        通过属性定位验证元素
-        
-        定位策略：
-        1. 用 CSS 选择器找元素
-        2. 逐个验证所有属性（包括 xpath 和 text）
-        3. 找到第一个验证通过的就返回成功
-        
-        Args:
-            element_data: 元素信息（来自 parse_weblinx_candidate）
-            bbox: 目标元素的边界框（用于多匹配时选择最近的）
-            demo_name: demo ID（用于获取滚动信息）
-            turn_idx: turn 索引（用于获取滚动信息）
-            
-        Returns:
-            (success, reason, element_info, element_handle)
-        """
-        if not element_data:
-            print(f"    ❌ 无元素信息（数据集缺失）")
-            return False, "no_element_data", {}, None
-        
-        # element_data 已经是解析后的格式（来自 parse_weblinx_candidate）
-        tag_name = element_data.get('tag', '')
-        
-        # 获取 bbox（用于多匹配时选择）
-        if bbox is None:
-            bbox = element_data.get('bbox')
-        
-        # 如果有 bbox 用于坐标筛选，需要先滚动到正确位置
-        if bbox and demo_name and turn_idx >= 0:
-            scroll_x, scroll_y = self._get_scroll_info(demo_name, turn_idx)
-            if scroll_y != 0 or scroll_x != 0:
-                try:
-                    self._page.evaluate(f"window.scrollTo({scroll_x}, {scroll_y})")
-                    self._page.wait_for_timeout(300)
-                except:
-                    pass
-        
-        # 用 CSS 选择器找元素
-        selector, desc = build_css_selector(element_data)
-        
-        if not selector:
-            print(f"    ✗ 没有可用属性构建 CSS 选择器")
-            return False, "no_css_selector", {'tag': tag_name}, None
-        
-        # 简化过长的选择器显示
-        if len(selector) > 80:
-            print(f"    [CSS选择器] {desc}")
-        else:
-            print(f"    [CSS选择器] {selector}")
-        
-        try:
-            elements = self._page.query_selector_all(selector)
-        except Exception as e:
-            print(f"    ✗ CSS 选择器错误: {str(e)}")
-            return False, f"css_error: {str(e)}", {'tag': tag_name}, None
-        
-        if not elements:
-            print(f"    ✗ 未找到元素")
-            return False, "css_not_found", {'tag': tag_name}, None
-        
-        # 如果多个元素，按坐标距离排序
-        if len(elements) > 1 and bbox:
-            target_x = bbox['x'] + bbox['width'] / 2
-            target_y = bbox['y'] + bbox['height'] / 2
-            
-            def get_distance(e):
-                try:
-                    rect = e.bounding_box()
-                    if rect:
-                        elem_cx = rect['x'] + rect['width'] / 2
-                        elem_cy = rect['y'] + rect['height'] / 2
-                        return ((elem_cx - target_x) ** 2 + (elem_cy - target_y) ** 2) ** 0.5
-                except:
-                    pass
-                return float('inf')
-            
-            elements = sorted(elements, key=get_distance)
-        
-        # 多元素时提示
-        if len(elements) > 1:
-            print(f"    找到 {len(elements)} 个候选，按坐标距离排序验证")
-        
-        # 逐个验证，找到第一个通过验证的
-        fail_reasons = []  # 收集失败原因
-        for i, element in enumerate(elements):
-            is_match, reason, matched, total = verify_weblinx_element_match(self._page, element, element_data)
-            
-            if is_match:
-                element_info = self._get_element_info(element)
-                if len(elements) == 1:
-                    print(f"    ✓ 匹配成功 ({matched}/{total}): {reason}")
-                else:
-                    print(f"    ✓ 第{i+1}个元素匹配成功 ({matched}/{total}): {reason}")
-                return True, f"match ({matched}/{total})", element_info, element
-            else:
-                # 记录失败原因
-                fail_reasons.append((i + 1, reason, matched, total))
-        
-        # 所有元素都验证失败
-        element_info = self._get_element_info(elements[0]) if elements else {}
-        print(f"    ✗ 所有 {len(elements)} 个候选元素验证失败")
-        # 打印每个元素的失败原因
-        for idx, reason, matched, total in fail_reasons:
-            print(f"      - 元素{idx}: ({matched}/{total}) {reason}")
-        return False, "all_verify_failed", element_info, None
+        """从 replay.json 获取滚动信息 - 使用共用函数"""
+        return get_scroll_info(self.raw_data_path, demo_name, turn_idx, self._replay_cache)
     
     def _verify_uid_in_page(self, uid: str) -> Tuple[bool, str, dict, any]:
         """
@@ -771,6 +370,7 @@ class WebLINXStaticChecker:
         file_url = f'file://{os.path.abspath(page_path)}'
         try:
             self._page.goto(file_url, wait_until='domcontentloaded', timeout=self.timeout)
+            time.sleep(3)  # 等待页面稳定，避免导航冲突
         except Exception as e:
             error_msg = str(e)
             result['uid_reason'] = f'load_error: {error_msg}'
@@ -780,13 +380,9 @@ class WebLINXStaticChecker:
             return result
         
         # 从 candidates（训练数据）中获取元素信息
-        target_candidate = find_candidate_by_uid(action.candidates, target_uid)
-        if target_candidate:
-            element_data = parse_weblinx_candidate(target_candidate)
-            result['candidate_found'] = True
-        else:
-            element_data = None
-            result['candidate_found'] = False
+        # find_candidate_by_uid 已经返回解析后的字典
+        element_data = find_candidate_by_uid(target_uid, action.candidates)
+        result['candidate_found'] = element_data is not None
         
         bbox = element_data.get('bbox') if element_data else None
         
@@ -808,6 +404,9 @@ class WebLINXStaticChecker:
             print(f"    ✗ 未找到: {uid_reason}")
         
         # ===== 指标2: 坐标定位（独立，只验证属性匹配）=====
+        # 获取滚动信息（用于坐标定位和属性定位）
+        scroll_x, scroll_y = self._get_scroll_info(demo_name, turn_idx)
+        
         print(f"\n[指标2] 坐标定位:")
         if bbox:
             expected_tag = element_data.get('tag', '') if element_data else ''
@@ -815,10 +414,13 @@ class WebLINXStaticChecker:
         else:
             print(f"    ✗ 无 bbox（数据集缺失）")
         
-        coord_success, coord_reason, coord_element_info, coord_element = self._verify_by_coords(
-            element_data=element_data,  # 使用 candidates 数据
-            demo_name=demo_name,         # 用于获取滚动信息
-            turn_idx=turn_idx,           # 用于获取滚动信息
+        # 使用 utils 中的共用函数
+        coord_success, coord_reason, coord_element_info, coord_element = verify_by_coords(
+            self._page,
+            element_data=element_data,
+            scroll_x=scroll_x,
+            scroll_y=scroll_y,
+            verbose=True,
         )
         result['coord_success'] = coord_success
         result['coord_reason'] = coord_reason
@@ -826,11 +428,14 @@ class WebLINXStaticChecker:
         
         # ===== 指标3: 属性定位（独立，CSS 选择器定位）=====
         print(f"\n[指标3] 属性定位:")
-        attr_success, attr_reason, attr_element_info, attr_element = self._verify_by_attrs(
-            element_data=element_data,  # 使用 candidates 数据
+        # 使用 utils 中的共用函数
+        attr_success, attr_reason, attr_element_info, attr_element = verify_by_attrs(
+            self._page,
+            element_data=element_data,
             bbox=bbox,
-            demo_name=demo_name,         # 用于获取滚动信息（多匹配时坐标筛选）
-            turn_idx=turn_idx,           # 用于获取滚动信息
+            scroll_x=scroll_x,
+            scroll_y=scroll_y,
+            verbose=True,
         )
         result['attr_success'] = attr_success
         result['attr_reason'] = attr_reason

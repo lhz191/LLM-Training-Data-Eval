@@ -82,6 +82,7 @@ def compute_dynamic_executability(
     
     # Action 级别统计
     total_actions = 0
+    uid_required_actions = 0  # 需要定位的操作数
     coord_success = 0
     attr_success = 0
     exec_success = 0
@@ -95,6 +96,11 @@ def compute_dynamic_executability(
             break
         
         total_records += 1
+        
+        # 打印序号
+        print(f"\n{'='*70}")
+        print(f"📋 Record {total_records}: {record.sample_id}")
+        print(f"{'='*70}")
         
         # 检查动态可执行性
         errors, warnings, stats = dynamic_checker.check(
@@ -115,6 +121,7 @@ def compute_dynamic_executability(
         
         # Action 级别统计
         total_actions += stats.get('total_actions', 0)
+        uid_required_actions += stats.get('uid_required_actions', 0)
         coord_success += stats.get('coords_success', 0)
         attr_success += stats.get('attrs_success', 0)
         exec_success += stats.get('executed_actions', 0)
@@ -125,6 +132,7 @@ def compute_dynamic_executability(
             'website': record.website,
             'url': stats.get('url', ''),
             'total_actions': stats.get('total_actions', 0),
+            'uid_required_actions': stats.get('uid_required_actions', 0),
             'coords_success': stats.get('coords_success', 0),
             'attrs_success': stats.get('attrs_success', 0),
             'executed_actions': stats.get('executed_actions', 0),
@@ -140,20 +148,23 @@ def compute_dynamic_executability(
         if progress_interval and total_records % progress_interval == 0:
             elapsed = time.time() - start_time
             rate = total_records / elapsed if elapsed > 0 else 0
-            curr_coord_rate = coord_success / total_actions if total_actions > 0 else 0
-            curr_attr_rate = attr_success / total_actions if total_actions > 0 else 0
+            curr_coord_rate = coord_success / uid_required_actions if uid_required_actions > 0 else 0
+            curr_attr_rate = attr_success / uid_required_actions if uid_required_actions > 0 else 0
             curr_exec_rate = exec_success / total_actions if total_actions > 0 else 0
             print(f"\n  [{total_records:,}] {rate:.2f} 条/秒")
-            print(f"    坐标定位: {coord_success}/{total_actions} ({curr_coord_rate:.1%})")
-            print(f"    属性定位: {attr_success}/{total_actions} ({curr_attr_rate:.1%})")
+            print(f"    需要定位: {uid_required_actions}/{total_actions}")
+            print(f"    坐标定位: {coord_success}/{uid_required_actions} ({curr_coord_rate:.1%})")
+            print(f"    属性定位: {attr_success}/{uid_required_actions} ({curr_attr_rate:.1%})")
             if execute:
                 print(f"    执行成功: {exec_success}/{total_actions} ({curr_exec_rate:.1%})")
     
     elapsed = time.time() - start_time
     
     # 计算总体成功率
-    coord_rate = coord_success / total_actions if total_actions > 0 else 0.0
-    attr_rate = attr_success / total_actions if total_actions > 0 else 0.0
+    # 坐标/属性定位成功率：只统计需要定位的操作
+    coord_rate = coord_success / uid_required_actions if uid_required_actions > 0 else 0.0
+    attr_rate = attr_success / uid_required_actions if uid_required_actions > 0 else 0.0
+    # 执行成功率：统计所有操作
     exec_rate = exec_success / total_actions if total_actions > 0 else 0.0
     
     # 结果
@@ -170,6 +181,7 @@ def compute_dynamic_executability(
         
         # Action 级别统计
         'total_actions': total_actions,
+        'uid_required_actions': uid_required_actions,
         'coord_success': coord_success,
         'attr_success': attr_success,
         'exec_success': exec_success,
@@ -221,29 +233,24 @@ def _save_summary_log(results: Dict[str, Any], summary_file: str, elapsed: float
     lines.append("")
     
     lines.append("【Action 级别】")
-    lines.append(f"  总 Action 数: {results.get('total_actions', 0)}")
+    total_actions = results.get('total_actions', 0)
+    uid_required = results.get('uid_required_actions', 0)
+    coord_success = results.get('coord_success', 0)
+    attr_success = results.get('attr_success', 0)
+    exec_success = results.get('exec_success', 0)
+    
+    lines.append(f"  总 Action 数: {total_actions}")
+    lines.append(f"  需要定位的操作: {uid_required}")
     lines.append("")
     
     lines.append("【动态可执行性指标】")
-    lines.append(f"  coord_rate: {results.get('coord_rate', 0):.4f}")
-    lines.append(f"  coord_success: {results.get('coord_success', 0)}")
-    lines.append(f"  attr_rate: {results.get('attr_rate', 0):.4f}")
-    lines.append(f"  attr_success: {results.get('attr_success', 0)}")
-    if execute:
-        lines.append(f"  exec_rate: {results.get('exec_rate', 0):.4f}")
-        lines.append(f"  exec_success: {results.get('exec_success', 0)}")
-    lines.append("")
-    
-    lines.append("=" * 60)
-    lines.append("【关键指标汇总】")
-    lines.append("=" * 60)
     coord_rate = results.get('coord_rate', 0)
     attr_rate = results.get('attr_rate', 0)
     exec_rate = results.get('exec_rate', 0)
-    lines.append(f"  📍 坐标定位成功率: {coord_rate:.2%}")
-    lines.append(f"  🏷️ 属性定位成功率: {attr_rate:.2%}")
+    lines.append(f"  坐标定位成功率: {coord_success}/{uid_required} ({coord_rate:.2%})")
+    lines.append(f"  属性定位成功率: {attr_success}/{uid_required} ({attr_rate:.2%})")
     if execute:
-        lines.append(f"  ⚡ 执行成功率: {exec_rate:.2%}")
+        lines.append(f"  执行成功率: {exec_success}/{total_actions} ({exec_rate:.2%})")
     lines.append("")
     
     # 按网站统计
@@ -254,12 +261,14 @@ def _save_summary_log(results: Dict[str, Any], summary_file: str, elapsed: float
             website_stats[site] = {
                 'records': 0,
                 'actions': 0,
+                'uid_required': 0,
                 'coord': 0,
                 'attr': 0,
                 'exec': 0,
             }
         website_stats[site]['records'] += 1
         website_stats[site]['actions'] += r.get('total_actions', 0)
+        website_stats[site]['uid_required'] += r.get('uid_required_actions', 0)
         website_stats[site]['coord'] += r.get('coords_success', 0)
         website_stats[site]['attr'] += r.get('attrs_success', 0)
         website_stats[site]['exec'] += r.get('executed_actions', 0)
@@ -268,11 +277,12 @@ def _save_summary_log(results: Dict[str, Any], summary_file: str, elapsed: float
         lines.append("【按网站统计 (Top 10)】")
         sorted_sites = sorted(website_stats.items(), key=lambda x: -x[1]['records'])
         for site, stats in sorted_sites[:10]:
-            a = stats['actions']
-            if a > 0:
-                coord_r = stats['coord'] / a
-                attr_r = stats['attr'] / a
-                exec_r = stats['exec'] / a
+            uid_req = stats['uid_required']
+            total_a = stats['actions']
+            if uid_req > 0:
+                coord_r = stats['coord'] / uid_req
+                attr_r = stats['attr'] / uid_req
+                exec_r = stats['exec'] / total_a if total_a > 0 else 0
                 if execute:
                     lines.append(f"  {site}: {stats['records']} records, "
                                 f"坐标 {coord_r:.0%}, 属性 {attr_r:.0%}, 执行 {exec_r:.0%}")
@@ -305,16 +315,24 @@ def _print_summary(results: Dict[str, Any], elapsed: float, execute: bool):
     print(f"  有错误: {results['records_with_errors']:,}")
     print(f"  有警告: {results['records_with_warnings']:,}")
     print()
+    
+    total_actions = results['total_actions']
+    uid_required = results.get('uid_required_actions', 0)
+    coord_success = results['coord_success']
+    attr_success = results['attr_success']
+    exec_success = results['exec_success']
+    
     print(f"【Action 级别】")
-    print(f"  总 Action 数: {results['total_actions']:,}")
+    print(f"  总 Action 数: {total_actions:,}")
+    print(f"  需要定位的操作: {uid_required:,}")
     print()
     print(f"【动态可执行性】")
-    print(f"  坐标定位成功率: {results['coord_success']:,}/{results['total_actions']:,} "
+    print(f"  坐标定位成功率: {coord_success:,}/{uid_required:,} "
           f"({results['coord_rate']:.2%})")
-    print(f"  属性定位成功率: {results['attr_success']:,}/{results['total_actions']:,} "
+    print(f"  属性定位成功率: {attr_success:,}/{uid_required:,} "
           f"({results['attr_rate']:.2%})")
     if execute:
-        print(f"  执行成功率: {results['exec_success']:,}/{results['total_actions']:,} "
+        print(f"  执行成功率: {exec_success:,}/{total_actions:,} "
               f"({results['exec_rate']:.2%})")
     print()
     
@@ -326,12 +344,14 @@ def _print_summary(results: Dict[str, Any], elapsed: float, execute: bool):
             website_stats[site] = {
                 'records': 0,
                 'actions': 0,
+                'uid_required': 0,
                 'coord': 0,
                 'attr': 0,
                 'exec': 0,
             }
         website_stats[site]['records'] += 1
         website_stats[site]['actions'] += r.get('total_actions', 0)
+        website_stats[site]['uid_required'] += r.get('uid_required_actions', 0)
         website_stats[site]['coord'] += r.get('coords_success', 0)
         website_stats[site]['attr'] += r.get('attrs_success', 0)
         website_stats[site]['exec'] += r.get('executed_actions', 0)
@@ -340,11 +360,12 @@ def _print_summary(results: Dict[str, Any], elapsed: float, execute: bool):
         print(f"【按网站统计】")
         sorted_sites = sorted(website_stats.items(), key=lambda x: -x[1]['records'])
         for site, stats in sorted_sites[:10]:
-            a = stats['actions']
-            if a > 0:
-                coord_r = stats['coord'] / a
-                attr_r = stats['attr'] / a
-                exec_r = stats['exec'] / a
+            uid_req = stats['uid_required']
+            total_a = stats['actions']
+            if uid_req > 0:
+                coord_r = stats['coord'] / uid_req
+                attr_r = stats['attr'] / uid_req
+                exec_r = stats['exec'] / total_a if total_a > 0 else 0
                 if execute:
                     print(f"  {site}: {stats['records']} records, "
                           f"坐标 {coord_r:.0%}, 属性 {attr_r:.0%}, 执行 {exec_r:.0%}")

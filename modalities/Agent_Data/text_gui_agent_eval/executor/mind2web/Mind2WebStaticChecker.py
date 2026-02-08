@@ -120,10 +120,94 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
         """属性定位验证（调用公共函数）"""
         return verify_by_attrs(self._page, action.target_element)
     
+    def _highlight_element(self, element, color: str = 'green', duration: float = 0.3):
+        """高亮元素（调试用）"""
+        try:
+            self._page.evaluate(f"""(el) => {{
+                el.style.outline = '3px solid {color}';
+                el.style.outlineOffset = '2px';
+            }}""", element)
+            if not self.headless:
+                time.sleep(duration)
+        except:
+            pass
+    
+    def _execute_action(self, action: Action, element) -> Tuple[bool, str]:
+        """
+        执行操作（与 DynamicChecker 逻辑一致）
+        
+        Args:
+            action: Action 对象
+            element: Playwright 元素句柄
+            
+        Returns:
+            (success, reason)
+        """
+        page = self._page
+        operation = action.metadata.get('operation', {})
+        op = operation.get('op', '').upper()
+        value = operation.get('value', '')
+        
+        try:
+            # 滚动到元素
+            try:
+                element.scroll_into_view_if_needed()
+            except:
+                pass
+            time.sleep(0.5)
+            
+            if op == 'CLICK':
+                element.click(force=True)  # force=True 跳过静态 HTML 的可点击检查
+                print(f"    ✓ 点击成功")
+                time.sleep(0.5)  # 静态不需要太长等待
+                return True, "success"
+            
+            elif op == 'HOVER':
+                element.hover()
+                print(f"    ✓ 悬停成功")
+                time.sleep(0.5)
+                return True, "success"
+            
+            elif op == 'TYPE':
+                element.click(force=True)
+                time.sleep(0.3)
+                # 选中已有文本
+                try:
+                    page.evaluate("(el) => { if(el.select) el.select(); }", element)
+                except:
+                    pass
+                page.keyboard.type(value)
+                print(f"    ✓ 输入成功: {value}")
+                time.sleep(0.5)
+                return True, "success"
+            
+            elif op == 'SELECT':
+                element.click(force=True)
+                time.sleep(0.5)
+                try:
+                    tag = page.evaluate("(el) => el.tagName.toLowerCase()", element)
+                    if tag == 'select':
+                        element.select_option(label=value)
+                    else:
+                        option = page.locator(f"text={value}").first
+                        option.click(timeout=3000)
+                    print(f"    ✓ 选择成功: {value}")
+                    time.sleep(0.5)
+                    return True, "success"
+                except Exception as e:
+                    return False, f"select_error: {e}"
+            
+            else:
+                return False, f"unknown_op: {op}"
+        
+        except Exception as e:
+            return False, f"execution_error: {e}"
+    
     def _verify_single_action(
         self,
         action: Action,
         annotation_id: str,
+        execute: bool = True,
     ) -> Dict[str, Any]:
         """
         验证单个 Action
@@ -131,6 +215,7 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
         Args:
             action: Action 对象
             annotation_id: Record 的 annotation_id
+            execute: 是否执行操作
             
         Returns:
             验证结果字典，包含详细的目标元素信息和验证结果
@@ -229,14 +314,40 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
         except Exception as e:
             result['attr_reason'] = f'exception: {str(e)}'
         
+        # 选择用于执行的元素（优先坐标定位，其次属性定位）
+        element = coord_element if coord_success else (attr_element if attr_success else None)
+        
+        # 高亮元素
+        if element:
+            color = 'green' if coord_success else 'blue'
+            self._highlight_element(element, color=color, duration=0.3)
+        
+        # 执行操作
+        if execute and element:
+            exec_success, exec_reason = self._execute_action(action, element)
+            result['executed'] = exec_success
+            result['exec_reason'] = exec_reason
+            
+            if exec_success:
+                print(f"\n✅ 执行成功: {exec_reason}")
+                if not self.headless:
+                    time.sleep(0.3)
+            else:
+                print(f"\n❌ 执行失败: {exec_reason}")
+        elif execute and not element:
+            result['executed'] = False
+            result['exec_reason'] = 'element_not_found'
+            print(f"\n❌ 无法执行（定位失败）")
+        
         return result
     
-    def check(self, record: Record) -> Tuple[List[str], List[str], Dict[str, Any]]:
+    def check(self, record: Record, execute: bool = True) -> Tuple[List[str], List[str], Dict[str, Any]]:
         """
         检查单个 Record 的静态可执行性
         
         Args:
             record: GUI Agent Record
+            execute: 是否执行操作（默认 True）
             
         Returns:
             (errors, warnings, stats) 元组，warnings 固定为空列表
@@ -252,8 +363,10 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
                 'verified_actions': 0,
                 'coord_success': 0,
                 'attr_success': 0,
+                'executed_success': 0,
                 'coord_rate': 0.0,
                 'attr_rate': 0.0,
+                'exec_rate': 0.0,
                 'action_results': [],
             }
         
@@ -265,6 +378,7 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
         print(f"\n{'='*70}")
         print(f"📋 Record: {record.sample_id} | annotation_id: {annotation_id}")
         print(f"   网站: {record.website or 'N/A'} | Actions: {total_actions}")
+        print(f"   执行模式: {'开启' if execute else '关闭'}")
         print(f"{'='*70}")
         
         # 验证每个 Action
@@ -272,12 +386,13 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
         mhtml_found_count = 0
         coord_success_count = 0
         attr_success_count = 0
+        exec_success_count = 0
         
         for idx, action in enumerate(record.actions):
             print(f"\n{'─'*60}")
             action_uid = action.metadata.get('action_uid', '')
             print(f"步骤 {idx+1}/{total_actions}: [{action.action_type.upper()}] {action_uid}")
-            result = self._verify_single_action(action, annotation_id)
+            result = self._verify_single_action(action, annotation_id, execute=execute)
             action_results.append(result)
             
             if result['mhtml_found']:
@@ -285,16 +400,16 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
                 if result['coord_success']:
                     coord_success_count += 1
                 else:
-                    # 坐标定位失败
                     errors.append(f"Action[{idx}]: coord_failed ({result.get('coord_reason', '?')})")
                     
                 if result['attr_success']:
                     attr_success_count += 1
                 else:
-                    # 属性定位失败
                     errors.append(f"Action[{idx}]: attr_failed ({result.get('attr_reason', '?')})")
+                
+                if result.get('executed'):
+                    exec_success_count += 1
             else:
-                # MHTML 未找到或加载失败
                 reason = result.get('coord_reason', 'mhtml_not_found')
                 errors.append(f"Action[{idx}]: {reason}")
         
@@ -302,9 +417,11 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
         if mhtml_found_count > 0:
             coord_rate = coord_success_count / mhtml_found_count
             attr_rate = attr_success_count / mhtml_found_count
+            exec_rate = exec_success_count / mhtml_found_count
         else:
             coord_rate = 0.0
             attr_rate = 0.0
+            exec_rate = 0.0
             errors.append("No MHTML files found for any action")
         
         stats = {
@@ -312,10 +429,20 @@ class Mind2WebStaticChecker(StaticExecutabilityChecker):
             'verified_actions': mhtml_found_count,
             'coord_success': coord_success_count,
             'attr_success': attr_success_count,
+            'executed_success': exec_success_count,
             'coord_rate': coord_rate,
             'attr_rate': attr_rate,
+            'exec_rate': exec_rate,
             'action_results': action_results,
         }
+        
+        # 打印汇总
+        print(f"\n{'='*70}")
+        print(f"汇总: 坐标定位 {coord_success_count}/{mhtml_found_count} ({coord_rate:.1%})")
+        print(f"      属性定位 {attr_success_count}/{mhtml_found_count} ({attr_rate:.1%})")
+        if execute:
+            print(f"      执行成功 {exec_success_count}/{mhtml_found_count} ({exec_rate:.1%})")
+        print(f"{'='*70}")
         
         return errors, [], stats
     

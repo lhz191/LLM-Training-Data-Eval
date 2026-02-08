@@ -4,13 +4,21 @@
 WebLINX HTML 定位器
 """
 
+import os
+import sys
 import re
 from typing import Tuple
 
+# 确保父目录在 path 中
+parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from text_gui_executor import HTMLLocator
 from .constants import UID_REQUIRED_ACTIONS
 
 
-class WebLINXLocator:
+class WebLINXLocator(HTMLLocator):
     """
     WebLINX HTML 定位器
     
@@ -59,6 +67,52 @@ class WebLINXLocator:
             return True, "found_truncated"
         
         return False, "uid_not_found"
+    
+    def locate_with_depth(self, action, html: str) -> Tuple[bool, int, str]:
+        """
+        定位元素并返回 DOM 深度
+        
+        先调用 can_locate 检查是否能定位，然后用 xpath 计算深度近似。
+        
+        Args:
+            action: Action 对象
+            html: HTML 字符串
+            
+        Returns:
+            (success, depth, reason)
+            - success: 是否定位成功
+            - depth: DOM 深度（xpath 中 '/' 的数量作为近似）
+            - reason: 原因说明
+        """
+        # 先检查是否能定位
+        can_locate_result, reason = self.can_locate(action, html)
+        if not can_locate_result:
+            return False, -1, reason
+        
+        # 如果不需要 uid 的操作（say, scroll, load 等），跳过深度计算
+        action_type = action.action_type
+        if action_type not in UID_REQUIRED_ACTIONS:
+            return True, -1, "no_uid_required"
+        
+        # 从 candidates 中获取 xpath 来计算深度
+        # （因为 cleaned_html 是非标准格式，无法用 BeautifulSoup 解析）
+        if not action.candidates:
+            return True, -1, "no_candidates_for_depth"
+        
+        # 取第一个 candidate（通常是目标元素）
+        candidate = action.candidates[0]
+        if not isinstance(candidate, dict):
+            return True, -1, "invalid_candidate_for_depth"
+        
+        xpath = candidate.get('xpath', '')
+        if not xpath:
+            return True, -1, "no_xpath_for_depth"
+        
+        # 计算 xpath 深度：'/' 的数量作为近似
+        # 例如 /html/body/div/span → 深度 4
+        depth = xpath.count('/')
+        
+        return True, depth, "found"
     
     def _check_truncated_uid(self, full_uid: str, html: str) -> bool:
         """

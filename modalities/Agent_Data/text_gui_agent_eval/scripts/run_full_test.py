@@ -29,11 +29,11 @@ DATASETS = {
     'mind2web': {
         'name': 'Mind2Web',
         # 本机路径
-        'data_path': '/home/liuhaoze/Desktop/mind2web',
-        'raw_dump_path': '/home/liuhaoze/data/raw_dump',
+        # 'data_path': '/home/liuhaoze/Desktop/mind2web',
+        # 'raw_dump_path': '/home/liuhaoze/data/raw_dump',
         # 远程路径（集群）
-        # 'data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/Mind2Web/data',
-        # 'raw_dump_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/Mind2Web/raw_dump',
+        'data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/Mind2Web/data',
+        'raw_dump_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/Mind2Web/raw_dump',
         'has_dynamic': True,  # 支持动态可执行性（真实网站）
         # 动作映射表（数据集动作 → Playwright 标准动作）
         # Mind2Web 动作类型: click, type, select, hover (loader 中已转小写)
@@ -47,7 +47,8 @@ DATASETS = {
     },
     'webshop': {
         'name': 'WebShop',
-        'data_path': os.path.join(os.path.dirname(os.path.dirname(__file__)), 'webshop/baseline_models/data/il_trajs_finalized_images.jsonl'),
+        # 远程路径（集群）
+        'data_path': '/mnt/petrelfs/liuhaoze/main_new/modalities/Agent_Data/webshop/baseline_models/data/il_trajs_finalized_images.jsonl',
         'use_browser': False,  # 默认使用 Text 环境
         'has_dynamic': False,  # 仿真环境，不支持动态可执行性
         # 动作映射表
@@ -61,12 +62,12 @@ DATASETS = {
     'weblinx': {
         'name': 'WebLINX',
         # 本机路径 - data_dir 是目录，loader 会自动拼接 {split}.json.gz
-        'data_path': '/home/liuhaoze/Desktop/mind2web/weblinx',
+        # 'data_path': '/home/liuhaoze/Desktop/mind2web/weblinx',
         # raw_data 路径（包含 demonstrations/）
-        'raw_data_path': '/home/liuhaoze/Downloads/raw_data',
+        # 'raw_data_path': '/home/liuhaoze/Downloads/raw_data',
         # 远程路径（集群）
-        # 'data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/weblinx/chat_data/data/chat',
-        # 'raw_data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/weblinx/raw_data',
+        'data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/weblinx/chat_data/data/chat',
+        'raw_data_path': '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/weblinx/raw_data',
         'has_dynamic': True,  # 支持动态可执行性（真实网站）
         # 动作映射表
         # WebLINX 动作类型: click, say, text_input, scroll, load, submit, change
@@ -522,6 +523,8 @@ def run_diversity(
     dataset_key: str, 
     max_samples: int = None, 
     progress_interval: int = 100,
+    parallel: bool = False,
+    max_workers: int = None,
 ):
     """运行指定数据集的多样性统计
     
@@ -531,6 +534,8 @@ def run_diversity(
         dataset_key: 数据集标识
         max_samples: 最大样本数（用于测试）
         progress_interval: 进度显示间隔
+        parallel: 是否使用并行模式（加速 APTED 计算）
+        max_workers: 并行进程数（默认为 CPU 核心数）
     """
     if dataset_key not in DATASETS:
         print(f"未知数据集: {dataset_key}")
@@ -546,12 +551,14 @@ def run_diversity(
     output_file = os.path.join(output_dir, 'diversity_results.json')
     
     print(f"\n{'='*70}")
-    print(f"Diversity 统计: {config['name']}")
+    print(f"Diversity 统计: {config['name']}" + (" (并行模式)" if parallel else ""))
     print(f"开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if max_samples:
         print(f"样本限制: {max_samples}")
     else:
         print(f"模式: 全量")
+    if parallel:
+        print(f"并行进程: {max_workers or '自动'}")
     print(f"{'='*70}\n")
     
     # 导入多样性统计模块
@@ -583,6 +590,8 @@ def run_diversity(
         progress_interval=progress_interval,
         action_mapping=config.get('action_mapping'),
         skip_actions=config.get('skip_actions'),
+        parallel=parallel,
+        max_workers=max_workers,
     )
     
     return results
@@ -596,6 +605,8 @@ def run_trajectory_validity(
     dataset_key: str, 
     max_samples: int = None, 
     progress_interval: int = 10,
+    parallel: bool = False,
+    max_workers: int = 8,
 ):
     """运行指定数据集的轨迹有效性评估（LLM Judge）
     
@@ -603,6 +614,8 @@ def run_trajectory_validity(
         dataset_key: 数据集标识
         max_samples: 最大样本数（用于测试）
         progress_interval: 进度显示间隔
+        parallel: 是否并行（多线程并发调用 LLM API）
+        max_workers: 并发线程数
     """
     if dataset_key not in DATASETS:
         print(f"未知数据集: {dataset_key}")
@@ -668,6 +681,8 @@ def run_trajectory_validity(
         output_file=output_file,
         max_samples=max_samples,
         progress_interval=progress_interval,
+        parallel=parallel,
+        max_workers=max_workers,
     )
     
     return results
@@ -739,6 +754,18 @@ def run_task_complexity(
         print()
         data_iter = iter(all_records)
     
+    elif dataset_key == 'webshop':
+        from loaders import WebShopLoader
+        from executor.webshop import WebShopLocator
+        
+        loader = WebShopLoader(config['data_path'])
+        locator = WebShopLocator()
+        print("正在解析 WebShop 数据...")
+        all_records = loader.parse_all(show_progress=True)
+        print(f"解析完成，共 {len(all_records)} 条记录")
+        print()
+        data_iter = iter(all_records)
+    
     else:
         print(f"数据集 {dataset_key} 暂不支持任务复杂度评估（需要 Locator）")
         return
@@ -793,6 +820,12 @@ def main():
     parser.add_argument('--browser', action='store_true',
                         help='WebShop: 使用浏览器环境而非 Text 环境（需要先启动 Flask 服务器）')
     
+    # 并行参数
+    parser.add_argument('--parallel', '-p', action='store_true',
+                        help='使用并行模式（加速 APTED 计算等）')
+    parser.add_argument('--workers', '-w', type=int, default=None,
+                        help='并行进程数（默认为 CPU 核心数）')
+    
     args = parser.parse_args()
     
     # 覆盖配置
@@ -841,6 +874,8 @@ def main():
                 key, 
                 max_samples=args.max_samples,
                 progress_interval=args.progress_interval,
+                parallel=args.parallel,
+                max_workers=args.workers,
             )
         
         if args.metric in ['trajectory_validity', 'all']:
@@ -848,6 +883,8 @@ def main():
                 key, 
                 max_samples=args.max_samples,
                 progress_interval=args.progress_interval,
+                parallel=args.parallel,
+                max_workers=args.workers if args.workers else 8,
             )
         
         if args.metric in ['task_complexity', 'all']:

@@ -30,6 +30,7 @@ import json
 import time
 from datetime import datetime
 from typing import Optional, Iterator, Dict, List, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 添加路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -183,6 +184,71 @@ def _parse_llm_response(response: str) -> Dict[str, Any]:
 
 
 # =============================================================================
+# 单条记录处理（用于并行）
+# =============================================================================
+
+def _process_single_record(record: 'Record') -> Dict[str, Any]:
+    """
+    处理单条记录（用于并行处理）
+    
+    Args:
+        record: Record 对象
+        
+    Returns:
+        处理结果字典
+    """
+    # 准备 LLM 输入
+    instruction = record.instruction or "(无指令)"
+    
+    # 动作序列
+    action_reprs = []
+    for i, action in enumerate(record.actions):
+        repr_str = action.action_repr or f"{action.action_type}"
+        action_reprs.append(f"Step {i+1}: {repr_str}")
+    action_reprs_str = "\n".join(action_reprs)
+    
+    # 最后一个动作和页面
+    if record.actions:
+        last_action = record.actions[-1]
+        last_action_str = last_action.action_repr or f"{last_action.action_type}"
+        last_page = last_action.cleaned_html or "(无页面内容)"
+    else:
+        last_action_str = "(无动作)"
+        last_page = "(无页面)"
+    
+    # 构建 prompt
+    prompt = TRAJECTORY_VALIDITY_PROMPT.format(
+        instruction=instruction,
+        action_reprs=action_reprs_str,
+        last_page=last_page,
+        last_action=last_action_str,
+    )
+    
+    # 调用 LLM
+    response = _call_llm(prompt)
+    result = _parse_llm_response(response)
+    
+    # 提取分数
+    consistency_score = result.get('consistency', {}).get('score', 0.0)
+    completeness_score = result.get('completeness', {}).get('score', 0.0)
+    
+    # 构建返回结果
+    record_result = {
+        'sample_id': record.sample_id,
+        'instruction': instruction,
+        'n_actions': len(record.actions),
+        'last_action': last_action_str,
+        'consistency': result.get('consistency', {}),
+        'completeness': result.get('completeness', {}),
+        'consistency_score': consistency_score,
+        'completeness_score': completeness_score,
+        'llm_error': result.get('parse_error', False),
+    }
+    
+    return record_result
+
+
+# =============================================================================
 # 主函数
 # =============================================================================
 
@@ -192,6 +258,8 @@ def compute_trajectory_validity(
     output_file: Optional[str] = None,
     max_samples: Optional[int] = None,
     progress_interval: int = 10,
+    parallel: bool = False,
+    max_workers: int = 8,
 ) -> Dict[str, Any]:
     """
     计算轨迹有效性指标
@@ -202,6 +270,8 @@ def compute_trajectory_validity(
         output_file: 结果输出文件
         max_samples: 最大样本数（用于测试）
         progress_interval: 进度显示间隔
+        parallel: 是否使用并行模式（多线程并发调用 LLM API）
+        max_workers: 并发线程数（默认 8）
     
     Returns:
         结果字典，包含：
@@ -210,16 +280,30 @@ def compute_trajectory_validity(
         - avg_completeness: 平均完整性分数
         - record_results: 每条记录的详细结果
     """
+    mode_str = "并行" if parallel else "串行"
     print("=" * 70)
-    print("Trajectory Validity Evaluation (LLM Judge)")
+    print(f"Trajectory Validity Evaluation (LLM Judge) - {mode_str}模式")
     print("=" * 70)
     print(f"数据集: {dataset_name}")
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if max_samples:
         print(f"样本限制: {max_samples}")
+    if parallel:
+        print(f"并发线程: {max_workers}")
     print()
     
     start_time = time.time()
+    
+    # 先收集所有记录
+    all_records = []
+    for record in data_iterator:
+        if max_samples and len(all_records) >= max_samples:
+            break
+        all_records.append(record)
+    
+    total_to_process = len(all_records)
+    print(f"共 {total_to_process:,} 条记录待处理")
+    print()
     
     # 统计
     total_records = 0
@@ -229,75 +313,66 @@ def compute_trajectory_validity(
     
     record_results = []
     
-    for record in data_iterator:
-        if max_samples and total_records >= max_samples:
-            break
-        
-        total_records += 1
-        
-        # 准备 LLM 输入
-        instruction = record.instruction or "(无指令)"
-        
-        # 动作序列
-        action_reprs = []
-        for i, action in enumerate(record.actions):
-            repr_str = action.action_repr or f"{action.action_type}"
-            action_reprs.append(f"Step {i+1}: {repr_str}")
-        action_reprs_str = "\n".join(action_reprs)
-        
-        # 最后一个动作和页面
-        if record.actions:
-            last_action = record.actions[-1]
-            last_action_str = last_action.action_repr or f"{last_action.action_type}"
-            last_page = last_action.cleaned_html or "(无页面内容)"
-        else:
-            last_action_str = "(无动作)"
-            last_page = "(无页面)"
-        
-        # 构建 prompt
-        prompt = TRAJECTORY_VALIDITY_PROMPT.format(
-            instruction=instruction,
-            action_reprs=action_reprs_str,
-            last_page=last_page,
-            last_action=last_action_str,
-        )
-        
-        # 调用 LLM
-        response = _call_llm(prompt)
-        result = _parse_llm_response(response)
-        
-        # 提取分数
-        consistency_score = result.get('consistency', {}).get('score', 0.0)
-        completeness_score = result.get('completeness', {}).get('score', 0.0)
-        
-        if result.get('parse_error'):
-            llm_failures += 1
-        
-        total_consistency += consistency_score
-        total_completeness += completeness_score
-        
-        # 记录结果
-        record_result = {
-            'sample_id': record.sample_id,
-            'instruction': instruction,
-            'n_actions': len(record.actions),
-            'last_action': last_action_str,
-            'consistency': result.get('consistency', {}),
-            'completeness': result.get('completeness', {}),
-        }
-        
-        if result.get('parse_error'):
-            record_result['llm_error'] = True
-        
-        record_results.append(record_result)
-        
-        # 进度
-        if progress_interval and total_records % progress_interval == 0:
-            elapsed = time.time() - start_time
-            rate = total_records / elapsed if elapsed > 0 else 0
-            avg_cons = total_consistency / total_records
-            avg_comp = total_completeness / total_records
-            print(f"  [{total_records:,}] {rate:.2f} 条/秒 | 一致性: {avg_cons:.2f} | 完整性: {avg_comp:.2f}")
+    if parallel:
+        # ==================== 并行模式 ====================
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            futures = {executor.submit(_process_single_record, record): record.sample_id 
+                       for record in all_records}
+            
+            # 处理结果
+            for future in as_completed(futures):
+                total_records += 1
+                result = future.result()
+                
+                # 累计分数
+                total_consistency += result['consistency_score']
+                total_completeness += result['completeness_score']
+                
+                if result['llm_error']:
+                    llm_failures += 1
+                
+                # 移除临时字段
+                result.pop('consistency_score', None)
+                result.pop('completeness_score', None)
+                
+                record_results.append(result)
+                
+                # 进度
+                if progress_interval and total_records % progress_interval == 0:
+                    elapsed = time.time() - start_time
+                    rate = total_records / elapsed if elapsed > 0 else 0
+                    avg_cons = total_consistency / total_records
+                    avg_comp = total_completeness / total_records
+                    print(f"  [{total_records:,}/{total_to_process:,}] {rate:.2f} 条/秒 | 一致性: {avg_cons:.2f} | 完整性: {avg_comp:.2f}")
+    else:
+        # ==================== 串行模式 ====================
+        for record in all_records:
+            total_records += 1
+            
+            # 使用公共处理函数
+            result = _process_single_record(record)
+            
+            # 累计分数
+            total_consistency += result['consistency_score']
+            total_completeness += result['completeness_score']
+            
+            if result['llm_error']:
+                llm_failures += 1
+            
+            # 移除临时字段
+            result.pop('consistency_score', None)
+            result.pop('completeness_score', None)
+            
+            record_results.append(result)
+            
+            # 进度
+            if progress_interval and total_records % progress_interval == 0:
+                elapsed = time.time() - start_time
+                rate = total_records / elapsed if elapsed > 0 else 0
+                avg_cons = total_consistency / total_records
+                avg_comp = total_completeness / total_records
+                print(f"  [{total_records:,}/{total_to_process:,}] {rate:.2f} 条/秒 | 一致性: {avg_cons:.2f} | 完整性: {avg_comp:.2f}")
     
     elapsed = time.time() - start_time
     
@@ -338,12 +413,19 @@ def compute_trajectory_validity(
     print(f"  📊 平均完整性分数: {avg_completeness:.3f}")
     print()
     
-    # 分数分布
+    # 分数分布（分数只有 0, 0.5, 1 三个值）
     if record_results:
-        high_consistency = sum(1 for r in record_results if r.get('consistency', {}).get('score', 0) >= 0.8)
-        high_completeness = sum(1 for r in record_results if r.get('completeness', {}).get('score', 0) >= 0.8)
-        print(f"  一致性 >= 0.8: {high_consistency}/{total_records} ({100*high_consistency/total_records:.1f}%)")
-        print(f"  完整性 >= 0.8: {high_completeness}/{total_records} ({100*high_completeness/total_records:.1f}%)")
+        full_consistency = sum(1 for r in record_results if r.get('consistency', {}).get('score', 0) == 1)
+        partial_consistency = sum(1 for r in record_results if r.get('consistency', {}).get('score', 0) == 0.5)
+        full_completeness = sum(1 for r in record_results if r.get('completeness', {}).get('score', 0) == 1)
+        partial_completeness = sum(1 for r in record_results if r.get('completeness', {}).get('score', 0) == 0.5)
+        
+        print(f"  一致性分布:")
+        print(f"    完全一致 (1.0): {full_consistency}/{total_records} ({100*full_consistency/total_records:.1f}%)")
+        print(f"    部分一致 (0.5): {partial_consistency}/{total_records} ({100*partial_consistency/total_records:.1f}%)")
+        print(f"  完整性分布:")
+        print(f"    完全完成 (1.0): {full_completeness}/{total_records} ({100*full_completeness/total_records:.1f}%)")
+        print(f"    部分完成 (0.5): {partial_completeness}/{total_records} ({100*partial_completeness/total_records:.1f}%)")
     
     print("=" * 70)
     

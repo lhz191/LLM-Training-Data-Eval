@@ -56,7 +56,7 @@ MODALITIES = {
         'name': 'API Agent',
         'module': 'modalities.Agent_Data.api_agent_eval.scripts.run_full_test',
         'datasets': ['toolbench', 'xlam'],
-        'metrics': ['format_check', 'executability', 'dynamic_executability', 'diversity'],
+        'metrics': ['format_check', 'executability', 'dynamic_executability', 'diversity', 'trustworthy'],
     },
     'gui': {
         'name': 'GUI Agent',

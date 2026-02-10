@@ -20,6 +20,19 @@ Usage:
     print(samples[0])
 """
 
+import os
+import sys
+
+# 确保当前目录在 path 中（用于导入 data_types 等模块）
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+if _current_dir not in sys.path:
+    sys.path.insert(0, _current_dir)
+
+# 确保项目根目录在 path 中（用于导入 common 模块）
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(_current_dir)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from .data_types import APIAgentSample, ToolDefinition, APICall, Parameter
 from .loaders import ToolBenchLoader, XLAMLoader, load_toolbench, load_xlam
 from .api_executor import (

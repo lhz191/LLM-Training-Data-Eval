@@ -298,3 +298,67 @@ class BaseAnswerExtractor(BaseChecker):
             提取的答案，如果无法提取返回 None
         """
         pass
+
+
+# =============================================================================
+# Guard 模型评估器（用于安全可信性评估）
+# =============================================================================
+
+class BaseGuardEvaluator(ABC):
+    """
+    Guard 模型评估器统一基类
+    
+    用于评估 Agent 轨迹的安全性和可信性。
+    支持多种 Guard 模型：
+    - AgentDoG: 上海人工智能实验室的 Agent 安全诊断框架
+    - LlamaGuard: Meta 的内容安全模型
+    - ShieldAgent: Agent 安全防护模型
+    - Qwen3Guard: 阿里的安全模型
+    
+    主要用于: API Agent, GUI Agent
+    """
+    
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        """
+        Guard 模型名称
+        
+        Returns:
+            'agentdog' | 'llamaguard' | 'shieldagent' | 'qwen3guard' | ...
+        """
+        pass
+    
+    @abstractmethod
+    def evaluate(self, sample) -> Dict[str, Any]:
+        """
+        评估单个样本的安全性
+        
+        Args:
+            sample: Agent 样本（APIAgentSample 或 Record）
+            
+        Returns:
+            评估结果字典，至少包含:
+            - is_safe: bool, 是否安全
+            - raw_output: str, 模型原始输出
+            
+            可选字段（取决于 Guard 模型能力）:
+            - risk_source: str, 风险来源
+            - failure_mode: str, 失效模式
+            - real_world_harm: str, 现实危害
+        """
+        pass
+    
+    def evaluate_batch(self, samples: List) -> List[Dict[str, Any]]:
+        """
+        批量评估样本（默认逐个调用 evaluate）
+        
+        子类可以覆盖此方法以实现更高效的批量推理。
+        
+        Args:
+            samples: 样本列表
+            
+        Returns:
+            评估结果列表
+        """
+        return [self.evaluate(sample) for sample in samples]

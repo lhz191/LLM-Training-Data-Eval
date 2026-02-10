@@ -27,7 +27,18 @@ import sys
 sys.set_int_max_str_digits(0)
 
 # 添加父目录到 sys.path，以便导入上级模块
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_api_agent_eval_dir = os.path.dirname(_script_dir)
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(_api_agent_eval_dir)))
+
+# 确保 api_agent_eval 目录在 path 中（用于导入 loaders, metrics, evaluator 等）
+if _api_agent_eval_dir not in sys.path:
+    sys.path.insert(0, _api_agent_eval_dir)
+
+# 确保项目根目录在 path 中（用于导入 common 模块）
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 import argparse
 import itertools
 from datetime import datetime
@@ -382,6 +393,85 @@ def run_diversity(dataset_key: str, max_samples: int = None, method: str = None,
 
 
 # =============================================================================
+# Trustworthy 评估
+# =============================================================================
+
+def run_trustworthy(dataset_key: str, max_samples: int = None, model_path: str = None,
+                    parallel: bool = False, num_gpus: int = 8):
+    """运行指定数据集的 Trustworthy 安全可信性评估
+    
+    Args:
+        dataset_key: 数据集标识
+        max_samples: 最大样本数（用于测试）
+        model_path: Guard 模型路径（默认使用 AgentDoG）
+        parallel: 是否使用多 GPU 并行模式
+        num_gpus: GPU 数量（并行模式下有效）
+    """
+    if dataset_key not in DATASETS:
+        print(f"未知数据集: {dataset_key}")
+        print(f"可用数据集: {list(DATASETS.keys())}")
+        return
+    
+    config = DATASETS[dataset_key]
+    module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # 输出目录
+    output_dir = os.path.join(module_dir, 'results', dataset_key)
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, 'trustworthy_results.json')
+    
+    # 默认模型路径
+    default_model_path = os.path.join(module_dir, 'models', 'agentdog-fg-qwen3-4b')
+    model_path = model_path or config.get('guard_model_path') or default_model_path
+    
+    print(f"\n{'='*70}")
+    print(f"Trustworthy 评估: {config['name']}")
+    print(f"Guard 模型: {model_path}")
+    print(f"模式: {'多 GPU 并行 (' + str(num_gpus) + ' GPUs)' if parallel else '单 GPU'}")
+    if max_samples:
+        print(f"样本限制: {max_samples}")
+    else:
+        print(f"样本: 全量")
+    print(f"{'='*70}\n")
+    
+    if dataset_key == 'toolbench':
+        from loaders import ToolBenchLoader
+        loader = ToolBenchLoader(config['data_path'])
+    elif dataset_key == 'xlam':
+        from loaders import XLAMLoader
+        loader = XLAMLoader(config['data_path'])
+    
+    if parallel:
+        # 多 GPU 并行模式
+        from metrics.trustworthy import compute_trustworthy_parallel
+        
+        results = compute_trustworthy_parallel(
+            data_iterator=loader.iterate(),
+            dataset_name=config['name'],
+            model_path=model_path,
+            num_gpus=num_gpus,
+            output_file=output_file,
+            max_samples=max_samples,
+        )
+    else:
+        # 单 GPU 模式
+        from metrics.trustworthy import compute_trustworthy
+        from evaluator import AgentDoGEvaluator
+        
+        evaluator = AgentDoGEvaluator(model_path)
+        
+        results = compute_trustworthy(
+            data_iterator=loader.iterate(),
+            dataset_name=config['name'],
+            evaluator=evaluator,
+            output_file=output_file,
+            max_samples=max_samples,
+    )
+    
+    return results
+
+
+# =============================================================================
 # 主函数
 # =============================================================================
 
@@ -391,7 +481,7 @@ def main():
                         choices=['all'] + list(DATASETS.keys()),
                         help='要验证的数据集 (默认: toolbench)')
     parser.add_argument('--metric', '-m', type=str, default='format_check',
-                        choices=['format_check', 'executability', 'dynamic_executability', 'diversity', 'all'],
+                        choices=['format_check', 'executability', 'dynamic_executability', 'diversity', 'trustworthy', 'all'],
                         help='评估指标 (默认: format_check)')
     
     # 通用参数
@@ -422,6 +512,10 @@ def main():
                         help='Vendi Score 分 batch 计算的 batch 大小，用于节省显存 (默认: None 表示不分 batch，建议值: 5000-10000)')
     parser.add_argument('--num-gpus', type=int, default=None,
                         help='Vendi Score 多 GPU 并行计算时使用的 GPU 数量 (默认: None 表示自动检测)')
+    
+    # Trustworthy 参数
+    parser.add_argument('--guard-model-path', type=str, default=None,
+                        help='Guard 模型路径（Trustworthy 评估）')
     
     args = parser.parse_args()
     
@@ -463,6 +557,15 @@ def main():
                 embedding_batch_size=args.embedding_batch_size,
                 vendi_batch_size=args.vendi_batch_size,
                 num_gpus=args.num_gpus
+            )
+        
+        if args.metric in ['trustworthy', 'all']:
+            run_trustworthy(
+                key,
+                max_samples=args.max_samples,
+                model_path=args.guard_model_path,
+                parallel=args.parallel,
+                num_gpus=args.num_gpus or 8,
             )
 
 

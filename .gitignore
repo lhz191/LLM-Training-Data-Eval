@@ -80,6 +80,18 @@ modalities/Symbolic_and_Logical_Data/OpenMathInstruct-1/
 modalities/Agent_Data/mind2web/
 modalities/Agent_Data/toolbench/
 modalities/Agent_Data/xlam_60k/
+modalities/Agent_Data/webarena/
+modalities/Agent_Data/weblinx/
+modalities/Agent_Data/webshop/
+modalities/Agent_Data/multimodal_mind2web/
+
+# Standalone repos (不提交)
+WebShop/
+
+# Local docs (不提交)
+meeting_summary*
+*.tex
+*_by_format.md
 
 # OS files
 .DS_Store

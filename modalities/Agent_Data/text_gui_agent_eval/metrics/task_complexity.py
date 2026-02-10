@@ -98,6 +98,37 @@ def score_to_label(score: float) -> str:
         return "deep"
 
 
+def steps_to_score(steps: int) -> float:
+    """
+    将动作步数映射到完成难度分数
+    
+    Args:
+        steps: 动作步数
+        
+    Returns:
+        分数：
+        - 0.5: 简单 (1-5 步)
+        - 0.75: 中等 (6-15 步)
+        - 1.0: 困难 (16+ 步)
+    """
+    if steps <= 5:
+        return 0.5
+    elif steps <= 15:
+        return 0.75
+    else:
+        return 1.0
+
+
+def steps_score_to_label(score: float) -> str:
+    """将步数分数转换为标签"""
+    if score == 0.5:
+        return "easy"
+    elif score == 0.75:
+        return "moderate"
+    else:
+        return "hard"
+
+
 # =============================================================================
 # 主函数
 # =============================================================================
@@ -155,6 +186,8 @@ def compute_task_complexity(
     depth_counter = Counter()  # 深度分布
     score_counter = Counter()  # 分数分布
     reason_counter = Counter()  # 定位结果分布
+    step_counter = Counter()   # 每个 record 的动作步数分布
+    all_step_counts = []       # 所有 record 的步数列表
     
     action_results = []  # 每个 action 的详细结果
     
@@ -163,6 +196,11 @@ def compute_task_complexity(
             break
         
         total_records += 1
+        
+        # 记录当前 record 的动作步数
+        record_step_count = len(record.actions)
+        all_step_counts.append(record_step_count)
+        step_counter[record_step_count] += 1
         
         for action in record.actions:
             # 获取 HTML
@@ -224,6 +262,21 @@ def compute_task_complexity(
     deep_ratio = score_counter['deep'] / total_actions if total_actions > 0 else 0
     not_found_ratio = score_counter['not_found'] / total_actions if total_actions > 0 else 0
     
+    # 动作步数统计
+    avg_steps = sum(all_step_counts) / len(all_step_counts) if all_step_counts else 0
+    min_steps = min(all_step_counts) if all_step_counts else 0
+    max_steps = max(all_step_counts) if all_step_counts else 0
+    median_steps = sorted(all_step_counts)[len(all_step_counts) // 2] if all_step_counts else 0
+    
+    # 步数区间分布 (按难度分)
+    steps_easy = sum(1 for s in all_step_counts if s <= 5)       # 简单: 1-5 步
+    steps_moderate = sum(1 for s in all_step_counts if 6 <= s <= 15)  # 中等: 6-15 步
+    steps_hard = sum(1 for s in all_step_counts if s > 15)       # 困难: 16+ 步
+    
+    # 计算完成难度分数 (每个 record 的步数分数的平均值)
+    completion_scores = [steps_to_score(s) for s in all_step_counts]
+    avg_completion_score = sum(completion_scores) / len(completion_scores) if completion_scores else 0
+    
     # 构建结果
     results = {
         'dataset': dataset_name,
@@ -236,19 +289,52 @@ def compute_task_complexity(
         'total_actions': total_actions,
         'found_actions': found_actions,
         
-        # 核心指标
+        # ========== 核心分数 ==========
+        # 目标定位难度 (基于 DOM 深度)
+        'localization_difficulty_score': avg_score,
+        # 完成难度 (基于动作步数)
+        'completion_difficulty_score': avg_completion_score,
+        
+        # ========== 目标定位难度详情 ==========
+        'localization_difficulty': {
+            'score': avg_score,
         'avg_depth': avg_depth,
-        'avg_score': avg_score,
+            'distribution': {
+                'surface': score_counter['surface'],      # 表面可见 (0-3)
+                'moderate': score_counter['moderate'],    # 中等深度 (4-9)
+                'deep': score_counter['deep'],            # 深层隐藏 (>9)
+                'not_found': score_counter['not_found'],  # 找不到
+            },
+            'ratios': {
+                'surface': surface_ratio,
+                'moderate': moderate_ratio,
+                'deep': deep_ratio,
+                'not_found': not_found_ratio,
+            },
+            'depth_distribution': dict(sorted(depth_counter.items())),
+        },
         
-        # 分数分布
-        'surface_ratio': surface_ratio,      # 表面可见
-        'moderate_ratio': moderate_ratio,    # 中等深度
-        'deep_ratio': deep_ratio,            # 深层隐藏
-        'not_found_ratio': not_found_ratio,  # 找不到
+        # ========== 完成难度详情 ==========
+        'completion_difficulty': {
+            'score': avg_completion_score,
+            'avg_steps': avg_steps,
+            'min_steps': min_steps,
+            'max_steps': max_steps,
+            'median_steps': median_steps,
+            'distribution': {
+                'easy': steps_easy,       # 简单: 1-5 步
+                'moderate': steps_moderate,  # 中等: 6-15 步
+                'hard': steps_hard,       # 困难: 16+ 步
+            },
+            'ratios': {
+                'easy': steps_easy / total_records if total_records > 0 else 0,
+                'moderate': steps_moderate / total_records if total_records > 0 else 0,
+                'hard': steps_hard / total_records if total_records > 0 else 0,
+            },
+            'detailed_distribution': dict(sorted(step_counter.items())),
+        },
         
-        # 详细分布
-        'score_distribution': dict(score_counter),
-        'depth_distribution': dict(sorted(depth_counter.items())),
+        # 其他详细分布
         'reason_distribution': dict(reason_counter),
         
         # 样本结果（用于调试）
@@ -273,23 +359,55 @@ def compute_task_complexity(
     print(f"  总动作数: {total_actions:,}")
     print(f"  成功定位: {found_actions:,} ({100*found_actions/total_actions:.1f}%)")
     print()
-    print(f"  📊 平均 DOM 深度: {avg_depth:.2f}")
-    print(f"  📊 平均分数: {avg_score:.3f}")
-    print()
-    print("  分数分布:")
-    print(f"    - 表面 (depth 0-3):  {score_counter['surface']:,} ({100*surface_ratio:.1f}%)")
-    print(f"    - 中等 (depth 4-9):  {score_counter['moderate']:,} ({100*moderate_ratio:.1f}%)")
-    print(f"    - 深层 (depth > 9):  {score_counter['deep']:,} ({100*deep_ratio:.1f}%)")
-    print(f"    - 未找到:            {score_counter['not_found']:,} ({100*not_found_ratio:.1f}%)")
+    
+    # 核心分数
+    print("=" * 70)
+    print("【核心分数】")
+    print(f"  ★ 目标定位难度: {avg_score:.3f}")
+    print(f"  ★ 完成难度:     {avg_completion_score:.3f}")
+    print("=" * 70)
     print()
     
-    # 解读
+    # 维度1: 目标定位难度
+    print("【目标定位难度详情】(基于 DOM 深度)")
+    print(f"  平均 DOM 深度: {avg_depth:.2f}")
+    print()
+    print("  分布:")
+    print(f"    - 表面 (depth 0-3, 0.5分):  {score_counter['surface']:,} ({100*surface_ratio:.1f}%)")
+    print(f"    - 中等 (depth 4-9, 0.75分): {score_counter['moderate']:,} ({100*moderate_ratio:.1f}%)")
+    print(f"    - 深层 (depth >9, 1分):     {score_counter['deep']:,} ({100*deep_ratio:.1f}%)")
+    print(f"    - 未找到 (0分):             {score_counter['not_found']:,} ({100*not_found_ratio:.1f}%)")
+    print()
+    
+    # 维度2: 完成难度
+    easy_ratio = steps_easy / total_records if total_records > 0 else 0
+    moderate_step_ratio = steps_moderate / total_records if total_records > 0 else 0
+    hard_ratio = steps_hard / total_records if total_records > 0 else 0
+    
+    print("【完成难度详情】(基于动作步数)")
+    print(f"  平均步数: {avg_steps:.1f} | 中位数: {median_steps} | 范围: {min_steps}-{max_steps}")
+    print()
+    print("  分布:")
+    print(f"    - 简单 (1-5 步, 0.5分):   {steps_easy:,} ({100*easy_ratio:.1f}%)")
+    print(f"    - 中等 (6-15 步, 0.75分): {steps_moderate:,} ({100*moderate_step_ratio:.1f}%)")
+    print(f"    - 困难 (16+ 步, 1分):     {steps_hard:,} ({100*hard_ratio:.1f}%)")
+    print()
+    
+    # 综合解读
+    print("【综合解读】")
     if avg_score < 0.6:
-        print("  ⚠️ 数据偏向'表面信息'，Agent 可能缺乏深度探索能力")
+        print("  ⚠️ 目标定位偏易，大部分元素在表面")
     elif avg_score > 0.8:
-        print("  ✅ 数据包含较多'深层信息'，有助于训练探索能力")
+        print("  ✅ 目标定位较难，有助于训练探索能力")
     else:
-        print("  📈 数据深度分布较均衡")
+        print("  📈 目标定位难度适中")
+    
+    if avg_completion_score < 0.6:
+        print("  ⚠️ 任务步数偏少，可能缺乏长程规划训练")
+    elif avg_completion_score > 0.85:
+        print("  ✅ 任务步数较多，有助于训练长程规划能力")
+    else:
+        print("  📈 任务完成难度适中")
     
     print("=" * 70)
     

@@ -1303,6 +1303,26 @@ class WebLINXLoader(BaseLoader):
         
         return records
 
+    def iterate(self, show_progress: bool = True) -> Iterator[Record]:
+        """
+        迭代返回 Record（流式处理）
+        
+        由于 WebLINX 需要先按 demo 聚合，这里先加载全部数据再迭代
+        """
+        if not self.demos:
+            self.load()
+        
+        demo_ids = list(self.demos.keys())
+        
+        if show_progress:
+            from tqdm import tqdm
+            demo_ids = tqdm(demo_ids, desc="Iterating demos")
+        
+        for idx, demo_id in enumerate(demo_ids):
+            record = self.parse_record(demo_id, idx)
+            if record:
+                yield record
+
 
 # =============================================================================
 # 便捷函数

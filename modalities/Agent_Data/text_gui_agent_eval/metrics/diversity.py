@@ -53,6 +53,8 @@ from datetime import datetime
 from typing import List, Dict, Any, Iterator, Optional, Tuple
 from collections import Counter
 from urllib.parse import urlparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import cpu_count
 
 # =============================================================================
 # 第三方库
@@ -120,9 +122,13 @@ PLAYWRIGHT_STANDARD_ACTIONS = PLAYWRIGHT_LOCATOR_ACTIONS | PLAYWRIGHT_PAGE_ACTIO
 # 1. 页面结构多样性 (APTED + Vendi Score)
 # =============================================================================
 
-def _html_to_apted_tree(html_str: str) -> Optional[AptedTree]:
+def _html_to_apted_tree(html_str: str, max_nodes: Optional[int] = None) -> Optional[AptedTree]:
     """
     将 cleaned_html 解析为 apted 库的 Tree 对象 (仅保留标签结构)。
+    
+    Args:
+        html_str: HTML 字符串
+        max_nodes: 最大节点数限制（None 表示不限制）
     """
     if not html_str or not html_str.strip():
         return None
@@ -135,25 +141,111 @@ def _html_to_apted_tree(html_str: str) -> Optional[AptedTree]:
     body = doc.find('.//body')
     root = body if body is not None else doc
 
-    def _to_apted(elem):
-        tag = elem.tag if isinstance(elem.tag, str) else 'unknown'
-        children = []
-        for child in elem:
-            if not isinstance(child.tag, str):
-                continue
-            child_tree = _to_apted(child)
-            if child_tree is not None:
-                children.append(child_tree)
-        return AptedTree(tag, *children)
+    if max_nodes is None:
+        # 不限制节点数
+        def _to_apted(elem):
+            tag = elem.tag if isinstance(elem.tag, str) else 'unknown'
+            children = []
+            for child in elem:
+                if not isinstance(child.tag, str):
+                    continue
+                child_tree = _to_apted(child)
+                if child_tree is not None:
+                    children.append(child_tree)
+            return AptedTree(tag, *children)
+    else:
+        # 限制节点数
+        node_count = [0]
+        def _to_apted(elem):
+            if node_count[0] >= max_nodes:
+                return None
+            node_count[0] += 1
+            tag = elem.tag if isinstance(elem.tag, str) else 'unknown'
+            children = []
+            for child in elem:
+                if node_count[0] >= max_nodes:
+                    break
+                if not isinstance(child.tag, str):
+                    continue
+                child_tree = _to_apted(child)
+                if child_tree is not None:
+                    children.append(child_tree)
+            return AptedTree(tag, *children)
 
     return _to_apted(root)
+
+
+# =============================================================================
+# 并行计算辅助函数
+# =============================================================================
+
+def _compute_apted_distance_batch(args: Tuple) -> List[Tuple[int, int, float]]:
+    """
+    计算一批 APTED 距离（用于并行处理）
+    
+    Args:
+        args: (pairs, html_dict) 
+              pairs: [(i, j), ...] 需要计算的索引对
+              html_dict: {idx: html_str, ...} 只包含本 batch 需要的 HTML
+    
+    Returns:
+        [(i, j, similarity), ...] 相似度结果
+    """
+    pairs, html_dict = args
+    results = []
+    
+    # 在 worker 中解析 HTML → APTED 树
+    # 缓存已解析的树，避免重复解析
+    tree_cache = {}
+    
+    for i, j in pairs:
+        # 按需解析树
+        if i not in tree_cache:
+            html = html_dict.get(i)
+            if html:
+                tree = _html_to_apted_tree(html)
+                size = str(tree).count('{') if tree else 0
+                tree_cache[i] = (tree, size)
+            else:
+                tree_cache[i] = (None, 0)
+        
+        if j not in tree_cache:
+            html = html_dict.get(j)
+            if html:
+                tree = _html_to_apted_tree(html)
+                size = str(tree).count('{') if tree else 0
+                tree_cache[j] = (tree, size)
+            else:
+                tree_cache[j] = (None, 0)
+        
+        tree_i, size_i = tree_cache[i]
+        tree_j, size_j = tree_cache[j]
+        
+        if tree_i is None or tree_j is None:
+            continue
+        
+        dist = APTED(tree_i, tree_j).compute_edit_distance()
+        max_size = max(size_i, size_j, 1)
+        sim = math.exp(-dist / max_size)
+        results.append((i, j, sim))
+    
+    return results
 
 
 def compute_dom_similarity_matrix(
     html_list: List[str],
     show_progress: bool = True,
+    parallel: bool = False,
+    max_workers: Optional[int] = None,
 ) -> np.ndarray:
-    """计算 N×N DOM 树相似度矩阵。"""
+    """计算 N×N DOM 树相似度矩阵。
+    
+    Args:
+        html_list: HTML 字符串列表
+        show_progress: 是否显示进度
+        parallel: 是否使用并行计算
+        max_workers: 并行进程数（默认为 CPU 核心数）
+    """
     n = len(html_list)
     if n == 0:
         return np.array([]).reshape(0, 0)
@@ -184,40 +276,104 @@ def compute_dom_similarity_matrix(
     computed = 0
 
     if show_progress:
-        print(f"  🔄 计算 {total_pairs:,} 对 APTED 编辑距离...")
+        mode_str = "并行" if parallel else "串行"
+        print(f"  🔄 计算 {total_pairs:,} 对 APTED 编辑距离 ({mode_str})...")
 
-    for i in range(n):
-        if trees[i] is None:
-            continue
-        for j in range(i + 1, n):
-            if trees[j] is None:
+    if parallel and total_pairs > 1000:
+        # ==================== 并行模式 ====================
+        if max_workers is None:
+            max_workers = min(32, cpu_count())
+        
+        if show_progress:
+            print(f"    使用 {max_workers} 个进程...")
+        
+        # 生成所有需要计算的索引对（基于预解析的树判断有效性）
+        all_pairs = [
+            (i, j) for i in range(n) for j in range(i + 1, n)
+            if trees[i] is not None and trees[j] is not None
+        ]
+        
+        if not all_pairs:
+            if show_progress:
+                print(f"  ✅ 无有效树对需要计算")
+            return K
+        
+        # 分批：每批 500 对
+        # 只传递每个 batch 需要的 HTML，避免序列化整个 html_list
+        batch_size = 500
+        batches = []
+        for start in range(0, len(all_pairs), batch_size):
+            batch_pairs = all_pairs[start:start + batch_size]
+            # 收集本 batch 需要的 HTML 索引
+            needed_indices = set()
+            for i, j in batch_pairs:
+                needed_indices.add(i)
+                needed_indices.add(j)
+            # 只传递需要的 HTML
+            html_dict = {idx: html_list[idx] for idx in needed_indices}
+            batches.append((batch_pairs, html_dict))
+        
+        if show_progress:
+            print(f"    共 {len(all_pairs):,} 对有效树，分 {len(batches)} 批处理...")
+        
+        # 并行计算
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_compute_apted_distance_batch, batch): idx 
+                       for idx, batch in enumerate(batches)}
+            
+            for future in as_completed(futures):
+                batch_results = future.result()
+                for i, j, sim in batch_results:
+                    K[i, j] = sim
+                    K[j, i] = sim
+                    computed += 1
+                
+                if show_progress and computed % 10000 < batch_size:
+                    print(f"    [{computed:,}/{len(all_pairs):,}] "
+                          f"({100 * computed / len(all_pairs):.1f}%)")
+    else:
+        # ==================== 串行模式 ====================
+        for i in range(n):
+            if trees[i] is None:
                 continue
-            dist = APTED(trees[i], trees[j]).compute_edit_distance()
-            max_size = max(tree_sizes[i], tree_sizes[j], 1)
-            sim = math.exp(-dist / max_size)
-            K[i, j] = sim
-            K[j, i] = sim
-            computed += 1
-            if show_progress and computed % 10000 == 0:
-                print(f"    [{computed:,}/{total_pairs:,}] "
-                      f"({100 * computed / total_pairs:.1f}%)")
+            for j in range(i + 1, n):
+                if trees[j] is None:
+                    continue
+                dist = APTED(trees[i], trees[j]).compute_edit_distance()
+                max_size = max(tree_sizes[i], tree_sizes[j], 1)
+                sim = math.exp(-dist / max_size)
+                K[i, j] = sim
+                K[j, i] = sim
+                computed += 1
+                if show_progress and computed % 10000 == 0:
+                    print(f"    [{computed:,}/{total_pairs:,}] "
+                          f"({100 * computed / total_pairs:.1f}%)")
 
-    if show_progress:
-        upper_tri = K[np.triu_indices(n, k=1)]
-        print(f"  ✅ 相似度矩阵完成 ({computed:,} 对)")
-        if len(upper_tri) > 0:
-            print(f"     均值={np.mean(upper_tri):.4f}  "
-                  f"中位数={np.median(upper_tri):.4f}  "
-                  f"范围=[{np.min(upper_tri):.4f}, {np.max(upper_tri):.4f}]")
+        if show_progress:
+            upper_tri = K[np.triu_indices(n, k=1)]
+            print(f"  ✅ 相似度矩阵完成 ({computed:,} 对)")
+            if len(upper_tri) > 0:
+                print(f"     均值={np.mean(upper_tri):.4f}  "
+                      f"中位数={np.median(upper_tri):.4f}  "
+                      f"范围=[{np.min(upper_tri):.4f}, {np.max(upper_tri):.4f}]")
 
     return K
 
 
-def compute_page_diversity(html_list: List[str]) -> Dict[str, Any]:
+def compute_page_diversity(
+    html_list: List[str],
+    parallel: bool = False,
+    max_workers: Optional[int] = None,
+) -> Dict[str, Any]:
     """
     计算页面结构多样性。
 
     输出核心指标: Vendi Score = 等效独立页面模板数 [3]。
+    
+    Args:
+        html_list: HTML 字符串列表
+        parallel: 是否使用并行计算
+        max_workers: 并行进程数
     """
     n = len(html_list)
     if n < 2:
@@ -229,7 +385,7 @@ def compute_page_diversity(html_list: List[str]) -> Dict[str, Any]:
             'similarity_std': 0.0,
         }
 
-    K = compute_dom_similarity_matrix(html_list)
+    K = compute_dom_similarity_matrix(html_list, parallel=parallel, max_workers=max_workers)
     vs = float(vendi_score_K(K, q=1))
     upper_tri = K[np.triu_indices(n, k=1)]
 
@@ -445,6 +601,9 @@ def compute_diversity(
     embedding_model: str = "all-MiniLM-L6-v2",
     action_mapping: Optional[Dict[str, str]] = None,
     skip_actions: Optional[set] = None,
+    parallel: bool = False,
+    max_workers: Optional[int] = None,
+    one_page_per_record: bool = True,
 ) -> Dict[str, Any]:
     """
     计算 GUI Agent 数据集多样性指标 (五个维度)。
@@ -459,15 +618,21 @@ def compute_diversity(
         embedding_model: 句子嵌入模型名称
         action_mapping: 数据集动作 → Playwright 标准动作的映射表
         skip_actions: 跳过的动作集合
+        parallel: 是否使用并行模式（加速 APTED 计算）
+        max_workers: 并行进程数（默认为 CPU 核心数）
+        one_page_per_record: 每个 record 只取第一个 HTML（大幅减少 APTED 计算量）
 
     Returns:
         包含五个维度指标的字典
     """
     print("=" * 70)
-    print("Diversity Evaluation")
+    print("Diversity Evaluation" + (" (并行模式)" if parallel else ""))
     print("=" * 70)
     print(f"数据集: {dataset_name}")
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    if parallel:
+        workers = max_workers or min(32, cpu_count())
+        print(f"并行进程: {workers}")
     print()
 
     start_time = time.time()
@@ -491,12 +656,21 @@ def compute_diversity(
         if record.instruction:
             instructions.append(record.instruction)
 
+        # 收集页面 HTML（可选：每个 record 只取第一个，大幅减少 APTED 计算量）
+        record_page_collected = False
         for action in record.actions:
             total_actions += 1
             if action.action_type:
                 action_types[action.action_type.lower()] += 1
             if action.cleaned_html:
-                page_htmls.append(action.cleaned_html)
+                if one_page_per_record:
+                    # 每个 record 只取第一个有 HTML 的 action
+                    if not record_page_collected:
+                        page_htmls.append(action.cleaned_html)
+                        record_page_collected = True
+                else:
+                    # 收集所有 action 的 HTML
+                    page_htmls.append(action.cleaned_html)
 
         if progress_interval and record_count % progress_interval == 0:
             elapsed = time.time() - start_time
@@ -515,7 +689,7 @@ def compute_diversity(
     # ==================== 计算五个维度 ====================
 
     print(f"\n📊 [1/5] 页面结构多样性 (APTED + Vendi Score)...")
-    page_div = compute_page_diversity(page_htmls)
+    page_div = compute_page_diversity(page_htmls, parallel=parallel, max_workers=max_workers)
 
     print(f"\n📊 [2/5] 动作模式多样性...")
     action_div = compute_action_diversity(
@@ -571,6 +745,11 @@ def compute_diversity(
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
         print(f"结果已保存到: {output_file}")
+        
+        # 保存汇总
+        summary_file = output_file.replace('.json', '_summary.txt')
+        _save_summary(results, summary_file)
+        print(f"汇总已保存到: {summary_file}")
 
     return results
 
@@ -609,3 +788,70 @@ def _print_results(results, page_div, action_div, domain_div, task_div, expressi
     print(f"  Self-BLEU = {expression_div['self_bleu']:.4f}  "
           f"表达多样性 = {expression_div['expression_diversity']:.4f}")
     print()
+
+
+def _save_summary(results: Dict[str, Any], output_file: str):
+    """保存汇总到文本文件。"""
+    s = results['summary']
+    dims = results['dimensions']
+    page_div = dims['page_diversity']
+    action_div = dims['action_diversity']
+    domain_div = dims['domain_diversity']
+    task_div = dims['task_diversity']
+    expression_div = dims['expression_diversity']
+    
+    lines = [
+        "=" * 70,
+        "Diversity Evaluation - 汇总报告",
+        "=" * 70,
+        f"数据集: {results['dataset']}",
+        f"生成时间: {results['timestamp']}",
+        f"耗时: {results['elapsed_seconds']:.1f} 秒",
+        "",
+        f"总记录数: {s['total_records']:,}",
+        f"总动作数: {s['total_actions']:,}",
+        f"总页面数: {s['total_pages']:,}",
+        f"平均每条记录动作数: {s['avg_actions_per_record']:.2f}",
+        "",
+        "=" * 70,
+        "五维度多样性指标",
+        "=" * 70,
+        "",
+        "【1. 页面结构多样性】 APTED + Vendi Score",
+        f"  ★ Vendi Score = {page_div['vendi_score']:.1f} (等效独立页面模板数)",
+        f"    VS/N (归一化) = {page_div['vendi_score_normalized']:.4f}",
+        f"    页面数 = {page_div['n_pages']}",
+        f"    平均相似度 = {page_div['similarity_mean']:.4f}",
+        f"    相似度标准差 = {page_div['similarity_std']:.4f}",
+        "",
+        "【2. 动作模式多样性】",
+        f"  动作类型数: {action_div['n_action_types']} 种",
+        f"  归一化熵: {action_div['action_type_entropy']:.4f}",
+        f"  Playwright 标准动作覆盖率: {action_div['action_type_coverage']:.2%}",
+        f"  动作分布: {action_div['action_distribution']}",
+        "",
+        "【3. 域名多样性】",
+        f"  唯一域名数: {domain_div['n_unique_domains']}",
+        f"  总样本数: {domain_div['n_total_samples']}",
+        f"  唯一域名比例: {domain_div['unique_domain_ratio']:.4f}",
+        f"  归一化熵: {domain_div['domain_entropy']:.4f}",
+        f"  Gini 系数: {domain_div['domain_gini']:.4f}",
+        f"  Top 10 域名: {domain_div['top_domains']}",
+        "",
+        "【4. 任务语义多样性】 Sentence Embedding",
+        f"  语义多样性: {task_div['semantic_diversity']:.4f}",
+        f"  平均余弦相似度: {task_div['avg_pairwise_similarity']:.4f}",
+        f"  指令数: {task_div['n_instructions']}",
+        "",
+        "【5. 表达模式多样性】 Self-BLEU",
+        f"  Self-BLEU: {expression_div['self_bleu']:.4f}",
+        f"  表达多样性 (1 - Self-BLEU): {expression_div['expression_diversity']:.4f}",
+        f"  指令数: {expression_div['n_instructions']}",
+        "",
+        "=" * 70,
+        f"详细结果: {output_file.replace('_summary.txt', '.json')}",
+        "=" * 70,
+    ]
+    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines))

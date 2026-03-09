@@ -1,0 +1,36 @@
+/mnt/petrelfs/liuhaoze/main_new/modalities/Agent_Data/api_agent_eval/metrics/synthetic_specific/distribution_similarity.py
+是有用的，field 值	embed 的内容
+"query"	sample.query（用户指令文本）
+"tools"	所有工具的 "名称: 描述" 拼接
+"both"	"Query: ...\n\nTools: ..." 拼在一起
+生成出来的数据集，和真实数据集的分布差多远？
+
+
+剩下两个要求完全一致，感觉有点离谱，生成数据怎么可能要求跟模版数据完全一致，只要符合自然数据的那些限制就ok
+
+不过我感觉embedding的相似度还是可以算的，编辑距离，要求完全内容一模一样是太离谱了
+
+只要形式上一样，语义上类似就ok
+
+
+这是完全合理的，恰好说明生成数据的质量不错。
+
+核心区别：一一比较 vs 分布比较
+
+Template Consistency（一一配对）：第 i 条生成数据 vs 第 i 条模板，cosine similarity ~0.12-0.21。说明每条生成数据和它的种子模板在语义上差异大，不是简单改写/复制。
+
+Distribution Similarity（全局分布）：把所有生成数据的 embedding 看成一个点云，所有模板的 embedding 看成另一个点云，MMD 衡量两个点云的重合程度。~0.977 说明两个数据集覆盖的语义空间几乎一样。
+
+打个比方：
+
+模板分布:      ●  ●  ●  ●  ●    (50 个点散布在某个区域)
+生成分布:      ○  ○  ○  ○  ○    (50 个点散布在相似区域)
+一一配对:      ● ←→ ○  距离远（每对不像）
+整体分布:      两团点云高度重叠（覆盖同一区域）
+这正是好的合成数据应该有的表现：
+
+低 consistency = 没有死记硬背模板，生成了真正的新内容
+高 distribution similarity = 生成的内容没有跑偏，还在目标领域内
+如果反过来（高 consistency + 高 distribution），说明在抄模板
+如果都低，说明生成的数据跑题了
+

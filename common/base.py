@@ -7,7 +7,7 @@ LLM Training Data Evaluation - 统一基类
 通过继承这些基类，各模态的实现可以被统一管理和调用。
 
 模态 (Modality):
-- api: API Agent (ToolBench, xLAM)
+- api: API Agent (ToolBench, xLAM, Arcee)
 - gui: GUI Agent (Mind2Web, WebShop, WebLINX)
 - math: Math/Symbolic (LILA, OpenMath)
 - image: Image-Text (COCO, etc.)

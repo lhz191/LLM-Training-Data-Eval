@@ -7,7 +7,8 @@ LLM Training Data Evaluation - 统一评估入口
 
 Usage:
     # 格式检查
-    python -m common.evaluate --modality api --dataset toolbench --metric format
+    python -m common.evaluate --modality api --dataset toolbench --metric format_check
+    python -m common.evaluate --modality api --dataset arcee --metric format_check
     python -m common.evaluate --modality gui --dataset mind2web --metric format
     python -m common.evaluate --modality math --dataset lila --metric format
     
@@ -15,8 +16,13 @@ Usage:
     python -m common.evaluate --modality api --dataset toolbench --metric executability
     python -m common.evaluate --modality gui --dataset mind2web --metric static
     
+    # 多样性 / 复杂度 / 安全性
+    python -m common.evaluate --modality api --dataset xlam --metric diversity
+    python -m common.evaluate --modality api --dataset arcee --metric task_complexity
+    python -m common.evaluate --modality api --dataset toolbench --metric trustworthy
+    
     # 动态检查
-    python -m common.evaluate --modality api --dataset toolbench --metric dynamic
+    python -m common.evaluate --modality api --dataset toolbench --metric dynamic_executability
     python -m common.evaluate --modality gui --dataset mind2web --metric dynamic
     
     # Math 特有
@@ -51,7 +57,7 @@ MODALITY_MODULES = {
 }
 
 MODALITY_DESCRIPTIONS = {
-    'api': 'API Agent (ToolBench, xLAM)',
+    'api': 'API Agent (ToolBench, xLAM, Arcee)',
     'gui': 'GUI Agent (Mind2Web, WebShop, WebLINX)',
     'math': 'Math/Symbolic (LILA, OpenMath)',
     'image': 'Image-Text',

@@ -3,9 +3,10 @@
 """
 Template Consistency 模板一致性指标
 
-衡量生成数据与模板（种子数据）的贴合程度：
-- 编辑距离: EditDistance(gen, template) / len(template)  → 越小越一致
-- Embedding 相似度: cos(φ(gen), φ(template))  → 越高越贴合
+衡量生成数据与模板（种子数据）的语义贴合程度。
+对 query, tools, api_calls 三个字段分别计算 Embedding 相似度。
+
+    cos(φ(gen), φ(template)) → 越高越贴合
 
 使用方式:
     from template_consistency import compute_template_consistency
@@ -13,8 +14,6 @@ Template Consistency 模板一致性指标
     results = compute_template_consistency(
         gen_iterator=gen_loader.iterate(),
         template_iterator=template_loader.iterate(),
-        gen_name='MyGenData',
-        template_name='SeedTemplates',
     )
 
 gen_iterator 和 template_iterator 需要一一对应。
@@ -38,26 +37,7 @@ sys.path.insert(0, _metrics_dir)
 
 from data_types import APIAgentSample  # noqa: E402
 
-
-def _levenshtein_distance(a: str, b: str) -> int:
-    """Levenshtein 编辑距离（两行 DP）"""
-    if a == b:
-        return 0
-    if not a:
-        return len(b)
-    if not b:
-        return len(a)
-    len_a, len_b = len(a), len(b)
-    prev = list(range(len_b + 1))
-    curr = [0] * (len_b + 1)
-    for i in range(1, len_a + 1):
-        curr[0] = i
-        ca = a[i - 1]
-        for j in range(1, len_b + 1):
-            cost = 0 if ca == b[j - 1] else 1
-            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
-        prev, curr = curr, prev
-    return prev[len_b]
+FIELDS = ["query", "tools", "api_calls"]
 
 
 def _summary_stats(values: List[float]) -> Dict[str, float]:
@@ -73,38 +53,11 @@ def _summary_stats(values: List[float]) -> Dict[str, float]:
     }
 
 
-def _collect_text_pairs(
-    gen_iterator: Iterator[APIAgentSample],
-    template_iterator: Iterator[APIAgentSample],
-    max_samples: Optional[int] = None,
-) -> tuple:
-    """收集生成文本和模板文本的配对列表"""
-    gen_texts: List[str] = []
-    template_texts: List[str] = []
-
-    template_list = list(template_iterator)
-    is_broadcast = len(template_list) == 1
-
-    n = 0
-    for sample in tqdm(gen_iterator, desc="收集生成文本"):
-        if max_samples is not None and n >= max_samples:
-            break
-        gen_texts.append((sample.query or "").strip())
-        n += 1
-
-    if is_broadcast:
-        single_template = (template_list[0].query or "").strip()
-        template_texts = [single_template] * len(gen_texts)
-        print(f"  模板只有 1 条，广播到 {len(gen_texts)} 条生成数据")
-    else:
-        for i, sample in enumerate(template_list):
-            if i >= len(gen_texts):
-                break
-            template_texts.append((sample.query or "").strip())
-        if len(template_texts) < len(gen_texts):
-            gen_texts = gen_texts[:len(template_texts)]
-
-    return gen_texts, template_texts
+def _cosine_sim_paired(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """逐行余弦相似度"""
+    a_norm = a / np.maximum(np.linalg.norm(a, axis=1, keepdims=True), 1e-8)
+    b_norm = b / np.maximum(np.linalg.norm(b, axis=1, keepdims=True), 1e-8)
+    return np.sum(a_norm * b_norm, axis=1)
 
 
 def compute_template_consistency(
@@ -115,20 +68,21 @@ def compute_template_consistency(
     embedding_model: str = "all-MiniLM-L6-v2",
     embedding_batch_size: int = 64,
     max_samples: Optional[int] = None,
-    gen_cache_path: Optional[str] = None,
-    template_cache_path: Optional[str] = None,
     output_file: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    计算生成数据与模板数据的一致性。
+    计算生成数据与模板数据的一致性（query/tools/api_calls 三字段）。
+
+    对每个字段分别生成 embedding，计算逐对 cosine similarity。
 
     Returns:
         {
-            "edit_distance_normalized": stats,
-            "embedding_similarity": stats,
-            "embsim_ge_0.9": int,
-            "embsim_ge_0.7": int,
-            "embsim_lt_0.5": int,
+            "per_field": {
+                "query": {"similarity": stats, "embsim_ge_0.9": int, ...},
+                "tools": {...},
+                "api_calls": {...},
+            },
+            ...
         }
     """
     from diversity import generate_embeddings
@@ -137,52 +91,68 @@ def compute_template_consistency(
     print("Template Consistency 模板一致性评估")
     print("=" * 70)
     print(f"生成数据: {gen_name} | 模板数据: {template_name}")
+    print(f"字段: {', '.join(FIELDS)}")
     print(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print()
 
     start_time = time.time()
 
-    gen_texts, template_texts = _collect_text_pairs(gen_iterator, template_iterator, max_samples)
-    n_pairs = len(gen_texts)
+    # 收集样本
+    print("-" * 50)
+    print("收集样本")
+    print("-" * 50)
+    template_list = list(template_iterator)
+    is_broadcast = len(template_list) == 1
+
+    gen_list: List[APIAgentSample] = []
+    for sample in tqdm(gen_iterator, desc="收集生成样本"):
+        if max_samples is not None and len(gen_list) >= max_samples:
+            break
+        gen_list.append(sample)
+
+    if is_broadcast:
+        tmpl_list = template_list * len(gen_list)
+        print(f"  模板只有 1 条，广播到 {len(gen_list)} 条生成数据")
+    else:
+        tmpl_list = template_list[:len(gen_list)]
+        if len(tmpl_list) < len(gen_list):
+            gen_list = gen_list[:len(tmpl_list)]
+
+    n_pairs = len(gen_list)
     print(f"  有效配对数: {n_pairs}")
     print()
 
     if n_pairs == 0:
         return {"gen_dataset": gen_name, "template_dataset": template_name, "n_pairs": 0}
 
-    # 编辑距离
-    print("-" * 50)
-    print("计算编辑距离")
-    print("-" * 50)
-    edit_ratios: List[float] = []
-    for g, t in tqdm(zip(gen_texts, template_texts), total=n_pairs, desc="编辑距离"):
-        dist = _levenshtein_distance(g, t)
-        edit_ratios.append(dist / max(len(t), 1))
-    print(f"  平均归一化编辑距离: {np.mean(edit_ratios):.4f}")
-    print()
+    # 对每个字段计算 embedding 相似度
+    per_field = {}
+    for f in FIELDS:
+        print("-" * 50)
+        print(f"字段: {f}")
+        print("-" * 50)
 
-    # Embedding 相似度
-    print("-" * 50)
-    print("生成 Embedding 并计算相似度")
-    print("-" * 50)
-    gen_samples = [APIAgentSample(query=t, tools=[], api_calls=[]) for t in gen_texts]
-    tmpl_samples = [APIAgentSample(query=t, tools=[], api_calls=[]) for t in template_texts]
+        gen_emb = generate_embeddings(
+            data_iterator=iter(gen_list), field=f,
+            model_name=embedding_model, batch_size=embedding_batch_size,
+        )
+        tmpl_emb = generate_embeddings(
+            data_iterator=iter(tmpl_list), field=f,
+            model_name=embedding_model, batch_size=embedding_batch_size,
+        )
 
-    gen_emb = generate_embeddings(
-        data_iterator=iter(gen_samples), field="query",
-        model_name=embedding_model, batch_size=embedding_batch_size,
-        cache_path=gen_cache_path,
-    )
-    tmpl_emb = generate_embeddings(
-        data_iterator=iter(tmpl_samples), field="query",
-        model_name=embedding_model, batch_size=embedding_batch_size,
-        cache_path=template_cache_path,
-    )
+        sims = _cosine_sim_paired(gen_emb, tmpl_emb)
+        sims_list = sims.tolist()
 
-    gen_norm = gen_emb / np.maximum(np.linalg.norm(gen_emb, axis=1, keepdims=True), 1e-8)
-    tmpl_norm = tmpl_emb / np.maximum(np.linalg.norm(tmpl_emb, axis=1, keepdims=True), 1e-8)
-    sims = np.sum(gen_norm * tmpl_norm, axis=1)
-    sims_list = sims.tolist()
+        field_result = {
+            "similarity": _summary_stats(sims_list),
+            "embsim_ge_0.9": int((sims >= 0.9).sum()),
+            "embsim_ge_0.7": int((sims >= 0.7).sum()),
+            "embsim_lt_0.5": int((sims < 0.5).sum()),
+        }
+        per_field[f] = field_result
+        print(f"  Embedding 相似度: {np.mean(sims_list):.4f}")
+        print()
 
     total_time = time.time() - start_time
 
@@ -190,14 +160,11 @@ def compute_template_consistency(
         "gen_dataset": gen_name,
         "template_dataset": template_name,
         "embedding_model": embedding_model,
+        "fields": FIELDS,
         "timestamp": datetime.now().isoformat(),
         "total_time_seconds": total_time,
         "n_pairs": n_pairs,
-        "edit_distance_normalized": _summary_stats(edit_ratios),
-        "embedding_similarity": _summary_stats(sims_list),
-        "embsim_ge_0.9": int((sims >= 0.9).sum()),
-        "embsim_ge_0.7": int((sims >= 0.7).sum()),
-        "embsim_lt_0.5": int((sims < 0.5).sum()),
+        "per_field": per_field,
     }
 
     if output_file:
@@ -212,11 +179,10 @@ def compute_template_consistency(
     print("=" * 70)
     print(f"评估完成！耗时 {total_time:.1f} 秒 | 配对数: {n_pairs}")
     print("=" * 70)
-    print(f"  编辑距离(归一化): {np.mean(edit_ratios):.4f}  (越小越一致)")
-    print(f"  Embedding 相似度: {np.mean(sims_list):.4f}  (越高越一致)")
-    print(f"    EmbSim >= 0.9: {results['embsim_ge_0.9']} ({100*results['embsim_ge_0.9']/n_pairs:.1f}%)")
-    print(f"    EmbSim >= 0.7: {results['embsim_ge_0.7']} ({100*results['embsim_ge_0.7']/n_pairs:.1f}%)")
-    print(f"    EmbSim <  0.5: {results['embsim_lt_0.5']} ({100*results['embsim_lt_0.5']/n_pairs:.1f}%)")
+    for f in FIELDS:
+        sim_mean = per_field[f]["similarity"]["mean"]
+        ge9 = per_field[f]["embsim_ge_0.9"]
+        print(f"  {f:12s}  相似度: {sim_mean:.4f}  (>= 0.9: {ge9}/{n_pairs})")
     print()
 
     return results

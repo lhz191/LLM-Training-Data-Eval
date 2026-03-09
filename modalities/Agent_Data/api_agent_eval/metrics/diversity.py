@@ -233,6 +233,50 @@ def generate_embeddings_transformers(
     return np.vstack(all_embeddings)
 
 
+def _extract_field_text(sample: APIAgentSample, field: str) -> str:
+    """从 APIAgentSample 中提取指定字段的文本表示"""
+    if field == "query":
+        return sample.query or ""
+    elif field == "tools":
+        parts = []
+        for tool in sample.tools:
+            parts.append(f"{tool.name}: {tool.description or ''}")
+        return "\n".join(parts)
+    elif field == "api_calls":
+        parts = []
+        for call in sample.api_calls:
+            name = call.name or ""
+            if name.lower() in ("finish", "finalaction"):
+                continue
+            args_str = ", ".join(f"{k}={v}" for k, v in (call.arguments or {}).items())
+            parts.append(f"{name}({args_str})")
+        return "\n".join(parts) if parts else ""
+    elif field == "both":
+        query = sample.query or ""
+        tool_parts = []
+        for tool in sample.tools:
+            tool_parts.append(f"{tool.name}: {tool.description or ''}")
+        tools = "\n".join(tool_parts)
+        return f"Query: {query}\n\nTools: {tools}"
+    elif field == "all":
+        query = sample.query or ""
+        tool_parts = []
+        for tool in sample.tools:
+            tool_parts.append(f"{tool.name}: {tool.description or ''}")
+        tools = "\n".join(tool_parts)
+        call_parts = []
+        for call in sample.api_calls:
+            name = call.name or ""
+            if name.lower() in ("finish", "finalaction"):
+                continue
+            args_str = ", ".join(f"{k}={v}" for k, v in (call.arguments or {}).items())
+            call_parts.append(f"{name}({args_str})")
+        calls = "\n".join(call_parts)
+        return f"Query: {query}\n\nTools: {tools}\n\nAPI Calls: {calls}"
+    else:
+        raise ValueError(f"Unknown field: {field}. Use 'query', 'tools', 'api_calls', 'both', or 'all'.")
+
+
 def generate_embeddings(
     data_iterator: Iterator[APIAgentSample],
     field: str = "query",
@@ -247,7 +291,7 @@ def generate_embeddings(
     
     Args:
         data_iterator: APIAgentSample 迭代器
-        field: 要提取的字段 ('query', 'tools', 'both')
+        field: 要提取的字段 ('query', 'tools', 'api_calls', 'both', 'all')
         model_name: 模型名称，支持:
             - sentence-transformers: 'all-MiniLM-L6-v2', 'all-mpnet-base-v2'
             - transformers: 'Qwen/Qwen3-Embedding-8B'
@@ -285,25 +329,7 @@ def generate_embeddings(
             break
         
         # 提取文本
-        if field == "query":
-            text = sample.query or ""
-        elif field == "tools":
-            # 工具描述拼接
-            tool_texts = []
-            for tool in sample.tools:
-                tool_text = f"{tool.name}: {tool.description or ''}"
-                tool_texts.append(tool_text)
-            text = "\n".join(tool_texts)
-        elif field == "both":
-            query = sample.query or ""
-            tool_texts = []
-            for tool in sample.tools:
-                tool_text = f"{tool.name}: {tool.description or ''}"
-                tool_texts.append(tool_text)
-            tools = "\n".join(tool_texts)
-            text = f"Query: {query}\n\nTools: {tools}"
-        else:
-            raise ValueError(f"Unknown field: {field}")
+        text = _extract_field_text(sample, field)
         
         # 截断过长文本
         if len(text) > max_text_length:
@@ -748,7 +774,8 @@ def compute_diversity(
         data_iterator: 数据迭代器
         dataset_name: 数据集名称
         method: 多样性计算方法 ('knn' 或 'vendi')
-        field: 用于计算 embedding 的字段 ('query', 'tools', 'both')
+        field: 主字段，决定 primary score ('query', 'tools', 'api_calls', 'both', 'all')
+              注意：所有三个基础字段 (query, tools, api_calls) 都会自动计算
         embedding_model: Embedding 模型名称，支持:
             - sentence-transformers: 'all-MiniLM-L6-v2', 'all-mpnet-base-v2'
             - transformers: 'Qwen/Qwen3-Embedding-8B'
@@ -791,56 +818,61 @@ def compute_diversity(
     print(f"共收集 {len(samples):,} 个样本")
     print()
     
-    # Step 1: 生成或加载 embedding
-    print("-" * 50)
-    print("Step 1: 生成/加载 Embedding")
-    print("-" * 50)
-    
-    # 如果指定了 embedding_batch_size，使用它；否则使用默认值
+    # Step 1 & 2: 对三个字段分别生成 embedding 并计算多样性
     emb_batch_size = embedding_batch_size if embedding_batch_size is not None else 8
+    FIELDS = ["query", "tools", "api_calls"]
     
-    embeddings = generate_embeddings(
-        data_iterator=iter(samples),
-        field=field,
-        model_name=embedding_model,
-        batch_size=emb_batch_size,
-        max_samples=max_samples,
-        cache_path=embedding_cache_path,
-    )
+    per_field_results = {}
+    primary_diversity_score = None
+    primary_diversity_result = None
+    
+    for f in FIELDS:
+        print("-" * 50)
+        print(f"Step 1-2: 字段 '{f}' — 生成 Embedding + 计算多样性 ({method})")
+        print("-" * 50)
+        
+        f_cache = None
+        if embedding_cache_path:
+            base, ext = os.path.splitext(embedding_cache_path)
+            f_cache = f"{base}_{f}{ext}"
+        
+        f_embeddings = generate_embeddings(
+            data_iterator=iter(samples),
+            field=f,
+            model_name=embedding_model,
+            batch_size=emb_batch_size,
+            max_samples=max_samples,
+            cache_path=f_cache,
+        )
+        
+        if method == "knn":
+            f_diversity = compute_knn_diversity(
+                embeddings=f_embeddings, k=k,
+                distance_metric=distance_metric, sample_size=sample_size,
+            )
+            f_score = f_diversity["knn_mean_distance"]
+        elif method == "vendi":
+            f_diversity = compute_vendi_score(
+                embeddings=f_embeddings, similarity_metric=similarity_metric,
+                sample_size=sample_size, batch_size=vendi_batch_size, num_gpus=num_gpus,
+            )
+            f_score = f_diversity["vendi_score"]
+        else:
+            raise ValueError(f"Unknown method: {method}. Use 'knn' or 'vendi'.")
+        
+        per_field_results[f] = {"score": f_score, **f_diversity}
+        print(f"  {f} 多样性分数: {f_score:.6f}")
+        print()
+        
+        if f == field:
+            primary_diversity_score = f_score
+            primary_diversity_result = f_diversity
+    
+    diversity_score = primary_diversity_score
+    diversity_result = primary_diversity_result
     
     embedding_time = time.time() - start_time
-    print(f"Embedding 耗时: {embedding_time:.1f} 秒")
-    print()
-    
-    # Step 2: 计算多样性
-    print("-" * 50)
-    print(f"Step 2: 计算多样性 ({method})")
-    print("-" * 50)
-    
-    diversity_start = time.time()
-    
-    if method == "knn":
-        diversity_result = compute_knn_diversity(
-            embeddings=embeddings,
-            k=k,
-            distance_metric=distance_metric,
-            sample_size=sample_size,
-        )
-        diversity_score = diversity_result["knn_mean_distance"]
-    elif method == "vendi":
-        diversity_result = compute_vendi_score(
-            embeddings=embeddings,
-            similarity_metric=similarity_metric,
-            sample_size=sample_size,
-            batch_size=vendi_batch_size,
-            num_gpus=num_gpus,
-        )
-        diversity_score = diversity_result["vendi_score"]
-    else:
-        raise ValueError(f"Unknown method: {method}. Use 'knn' or 'vendi'.")
-    
-    diversity_time = time.time() - diversity_start
-    print(f"多样性计算耗时: {diversity_time:.1f} 秒")
+    print(f"Embedding + 多样性总耗时: {embedding_time:.1f} 秒")
     print()
     
     # Step 3: API 调用多样性（轻量统计，复用 samples）
@@ -924,13 +956,12 @@ def compute_diversity(
     results = {
         "dataset": dataset_name,
         "method": method,
-        "field": field,
+        "primary_field": field,
         "embedding_model": embedding_model,
         "timestamp": datetime.now().isoformat(),
         "total_time_seconds": total_time,
-        "embedding_time_seconds": embedding_time,
-        "diversity_time_seconds": diversity_time,
         "embedding_diversity_score": diversity_score,
+        "per_field_diversity": per_field_results,
         **diversity_result,
         "api_call_diversity": api_call_diversity,
     }
@@ -950,12 +981,16 @@ def compute_diversity(
     print(f"评估完成！总耗时 {total_time:.1f} 秒")
     print("=" * 70)
     print()
-    print(f"数据集: {dataset_name}")
-    print(f"方法: {method}")
-    print(f"Embedding 多样性分数: {diversity_score:.6f}")
-    print(f"API 名称多样性 (归一化熵): {name_ent_norm:.6f}")
-    print(f"调用序列多样性 (归一化熵): {seq_ent_norm:.6f}")
-    print(f"参数组合多样性 (归一化熵): {param_ent_norm:.6f}")
+    print(f"数据集: {dataset_name} | 方法: {method}")
+    print()
+    print("【Embedding 多样性（按字段）】")
+    for f in FIELDS:
+        print(f"  {f:12s}: {per_field_results[f]['score']:.6f}")
+    print()
+    print("【API 调用多样性】")
+    print(f"  API 名称熵(归一化): {name_ent_norm:.6f}")
+    print(f"  调用序列熵(归一化): {seq_ent_norm:.6f}")
+    print(f"  参数组合熵(归一化): {param_ent_norm:.6f}")
     print()
     
     return results
@@ -976,8 +1011,8 @@ if __name__ == "__main__":
                         choices=["knn", "vendi"],
                         help="多样性计算方法")
     parser.add_argument("--field", type=str, default="query",
-                        choices=["query", "tools", "both"],
-                        help="用于计算 embedding 的字段")
+                        choices=["query", "tools", "api_calls", "both", "all"],
+                        help="主字段（所有字段都会计算，此项决定 primary score）")
     parser.add_argument("--model", type=str, default="all-MiniLM-L6-v2",
                         help="Embedding 模型名称: all-MiniLM-L6-v2, all-mpnet-base-v2, Qwen/Qwen3-Embedding-8B")
     parser.add_argument("--sample-size", type=int, default=None,

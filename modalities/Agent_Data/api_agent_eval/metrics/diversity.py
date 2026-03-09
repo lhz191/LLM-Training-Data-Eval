@@ -31,11 +31,13 @@ os.environ['NUMEXPR_NUM_THREADS'] = '32'
 
 import os
 import json
+import math
 import time
 import random
 import numpy as np
+from collections import Counter
 from datetime import datetime
-from typing import Optional, Iterator, Dict, Any, List
+from typing import Optional, Iterator, Dict, Any, List, Tuple
 from tqdm import tqdm
 
 import sys
@@ -685,6 +687,37 @@ def compute_knn_diversity(
 
 
 # =============================================================================
+# 辅助函数: 信息熵 / Gini
+# =============================================================================
+
+def _compute_entropy(counter: Counter) -> Tuple[float, float, int]:
+    """计算归一化熵。返回 (normalized_entropy, raw_entropy, n_types)。"""
+    if not counter:
+        return 0.0, 0.0, 0
+    n = len(counter)
+    if n < 2:
+        return 0.0, 0.0, n
+    total = sum(counter.values())
+    if total == 0:
+        return 0.0, 0.0, n
+    entropy = -sum((c / total) * math.log(c / total) for c in counter.values() if c > 0)
+    return entropy / math.log(n), entropy, n
+
+
+def _compute_gini(values: List[float]) -> float:
+    """计算 Gini 系数，衡量分布均匀度。0=完全均匀，1=完全集中。"""
+    if not values or len(values) < 2:
+        return 0.0
+    sorted_v = sorted(values)
+    n = len(sorted_v)
+    total = sum(sorted_v)
+    if total == 0:
+        return 0.0
+    weighted_sum = sum((i + 1) * v for i, v in enumerate(sorted_v))
+    return (2 * weighted_sum) / (n * total) - (n + 1) / n
+
+
+# =============================================================================
 # 主函数
 # =============================================================================
 
@@ -746,6 +779,18 @@ def compute_diversity(
     
     start_time = time.time()
     
+    # Step 0: 收集样本（供 embedding 和 API 调用多样性复用）
+    print("-" * 50)
+    print("Step 0: 收集样本")
+    print("-" * 50)
+    samples: List[APIAgentSample] = []
+    for s in tqdm(data_iterator, desc="收集样本"):
+        if max_samples is not None and len(samples) >= max_samples:
+            break
+        samples.append(s)
+    print(f"共收集 {len(samples):,} 个样本")
+    print()
+    
     # Step 1: 生成或加载 embedding
     print("-" * 50)
     print("Step 1: 生成/加载 Embedding")
@@ -755,7 +800,7 @@ def compute_diversity(
     emb_batch_size = embedding_batch_size if embedding_batch_size is not None else 8
     
     embeddings = generate_embeddings(
-        data_iterator=data_iterator,
+        data_iterator=iter(samples),
         field=field,
         model_name=embedding_model,
         batch_size=emb_batch_size,
@@ -798,6 +843,81 @@ def compute_diversity(
     print(f"多样性计算耗时: {diversity_time:.1f} 秒")
     print()
     
+    # Step 3: API 调用多样性（轻量统计，复用 samples）
+    print("-" * 50)
+    print("Step 3: 计算 API 调用多样性")
+    print("-" * 50)
+    
+    api_name_counter = Counter()
+    sequence_counter = Counter()
+    bigram_counter = Counter()
+    param_key_combo_counter = Counter()
+    n_calls_total = 0
+    n_samples_with_calls = 0
+    calls_per_sample: List[int] = []
+
+    for sample in samples:
+        names = []
+        for call in sample.api_calls:
+            name = (call.name or "").strip()
+            if not name or name.lower() in ("finish", "finalaction"):
+                continue
+            names.append(name)
+            api_name_counter[name] += 1
+            n_calls_total += 1
+            if isinstance(call.arguments, dict) and call.arguments:
+                param_key_combo_counter[tuple(sorted(call.arguments.keys()))] += 1
+
+        calls_per_sample.append(len(names))
+        if names:
+            n_samples_with_calls += 1
+            sequence_counter[tuple(names)] += 1
+            for i in range(len(names) - 1):
+                bigram_counter[(names[i], names[i + 1])] += 1
+
+    name_ent_norm, name_ent_raw, n_unique_apis = _compute_entropy(api_name_counter)
+    name_gini = _compute_gini(list(api_name_counter.values()))
+    seq_ent_norm, _, n_unique_seqs = _compute_entropy(sequence_counter)
+    bigram_ent_norm, _, n_unique_bigrams = _compute_entropy(bigram_counter)
+    param_ent_norm, _, n_unique_combos = _compute_entropy(param_key_combo_counter)
+
+    calls_arr = np.asarray(calls_per_sample, dtype=float)
+    api_call_diversity = {
+        "calls_per_sample": {
+            "mean": float(np.mean(calls_arr)) if len(calls_arr) > 0 else 0.0,
+            "std": float(np.std(calls_arr)) if len(calls_arr) > 0 else 0.0,
+            "median": float(np.median(calls_arr)) if len(calls_arr) > 0 else 0.0,
+            "max": float(np.max(calls_arr)) if len(calls_arr) > 0 else 0.0,
+        },
+        "api_name_diversity": {
+            "n_unique_apis": n_unique_apis,
+            "n_total_calls": n_calls_total,
+            "entropy_normalized": name_ent_norm,
+            "gini": name_gini,
+            "top_apis": dict(api_name_counter.most_common(20)),
+        },
+        "sequence_diversity": {
+            "n_unique_sequences": n_unique_seqs,
+            "n_samples_with_calls": n_samples_with_calls,
+            "sequence_unique_ratio": n_unique_seqs / n_samples_with_calls if n_samples_with_calls > 0 else 0.0,
+            "sequence_entropy_normalized": seq_ent_norm,
+            "bigram_entropy_normalized": bigram_ent_norm,
+            "n_unique_bigrams": n_unique_bigrams,
+            "top_sequences": {str(k): v for k, v in sequence_counter.most_common(10)},
+        },
+        "param_combo_diversity": {
+            "n_unique_param_combos": n_unique_combos,
+            "param_combo_unique_ratio": n_unique_combos / n_calls_total if n_calls_total > 0 else 0.0,
+            "param_combo_entropy_normalized": param_ent_norm,
+            "top_param_combos": {str(k): v for k, v in param_key_combo_counter.most_common(10)},
+        },
+    }
+
+    print(f"  唯一 API 数: {n_unique_apis}, 名称熵(归一化): {name_ent_norm:.4f}, Gini: {name_gini:.4f}")
+    print(f"  唯一序列数: {n_unique_seqs}, 序列熵(归一化): {seq_ent_norm:.4f}")
+    print(f"  唯一参数组合: {n_unique_combos}, 参数熵(归一化): {param_ent_norm:.4f}")
+    print()
+    
     total_time = time.time() - start_time
     
     # 汇总结果
@@ -810,8 +930,9 @@ def compute_diversity(
         "total_time_seconds": total_time,
         "embedding_time_seconds": embedding_time,
         "diversity_time_seconds": diversity_time,
-        "diversity_score": diversity_score,
+        "embedding_diversity_score": diversity_score,
         **diversity_result,
+        "api_call_diversity": api_call_diversity,
     }
     
     # 保存结果
@@ -831,7 +952,10 @@ def compute_diversity(
     print()
     print(f"数据集: {dataset_name}")
     print(f"方法: {method}")
-    print(f"多样性分数: {diversity_score:.6f}")
+    print(f"Embedding 多样性分数: {diversity_score:.6f}")
+    print(f"API 名称多样性 (归一化熵): {name_ent_norm:.6f}")
+    print(f"调用序列多样性 (归一化熵): {seq_ent_norm:.6f}")
+    print(f"参数组合多样性 (归一化熵): {param_ent_norm:.6f}")
     print()
     
     return results

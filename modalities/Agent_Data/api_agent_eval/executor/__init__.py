@@ -6,11 +6,13 @@ API Agent 执行器包
 按数据集组织的执行器模块：
 - executor.toolbench: ToolBench 数据集执行器
 - executor.xlam: xLAM 数据集执行器
+- executor.arcee_agent: Arcee Agent Data 执行器
 
 使用方式：
     # 方式1：直接导入类
     from executor.toolbench import ToolBenchFormatChecker
     from executor.xlam import XLAMFormatChecker
+    from executor.arcee_agent import ArceeAgentFormatChecker
     
     # 方式2：通过全局注册表
     from api_executor import get_format_checker
@@ -63,6 +65,21 @@ register_executability_checker('xlam-60k', XLAMExecutabilityChecker)  # 别名
 
 
 # =============================================================================
+# 导入并注册 Arcee Agent 检查器
+# =============================================================================
+
+from .arcee_agent import (
+    ArceeAgentFormatChecker,
+    ArceeAgentExecutabilityChecker,
+)
+
+register_format_checker('arcee-agent', ArceeAgentFormatChecker)
+register_format_checker('arcee-agent-data', ArceeAgentFormatChecker)  # 别名
+register_executability_checker('arcee-agent', ArceeAgentExecutabilityChecker)
+register_executability_checker('arcee-agent-data', ArceeAgentExecutabilityChecker)  # 别名
+
+
+# =============================================================================
 # 导出
 # =============================================================================
 
@@ -74,4 +91,7 @@ __all__ = [
     # xLAM
     'XLAMFormatChecker',
     'XLAMExecutabilityChecker',
+    # Arcee Agent
+    'ArceeAgentFormatChecker',
+    'ArceeAgentExecutabilityChecker',
 ]

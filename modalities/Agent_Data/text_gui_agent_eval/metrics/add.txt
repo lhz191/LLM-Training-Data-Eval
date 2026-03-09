@@ -87,3 +87,123 @@ embedding-based：KNN 距离、聚类多样性
 ✅ 分布统计
 ✅ 自动发现 metadata 字段
 需要调研相关专业论文后，根据需要升级。
+
+
+web agent合成指标的问题，web agent的轨迹一般可能不是那种给定模版，模拟合成的
+
+
+
+
+web agent安全可信性问题与agentdog：
+
+型。
+论文中有说他是针对api调用数据的吗
+
+回顾论文内容：
+论文明确提到的：
+训练数据来源（Section 3.2）：
+> "tool definitions from ToolBench and ToolAlpaca... approximately 10,000 distinct tools"
+主要是 API/工具调用数据
+局限性部分（Section 8.2）明确说：
+> "Currently, the input of AgentDoG is confined to text-based trajectories. Expanding AgentDoG's capabilities to support multimodal inputs is a crucial next step for safeguarding GUI-based agents."
+承认 GUI Agent 是未来方向，目前不支持
+Benchmark 对比：
+R-Judge、ASSE-Safety、ATBench 都是 API/工具调用场景
+没有 Mind2Web、WebLINX 这类 GUI 数据集
+结论：
+AgentDoG 定位	说明
+当前支持	Text-based API/工具调用轨迹
+未来方向	GUI-based agents（论文承认是 limitation）
+你的数据	Mind2Web/WebLINX 是 GUI Agent，需要适配或等未来版本
+可能的替代方案：
+将 GUI 操作抽象成"工具调用"格式（click(button) → ClickTool(target="button")）
+直接用通用 LLM（如 GPT-4）做安全性评估
+等 AgentDoG 的 GUI 版本
+你觉得哪个方案更合适？
+
+
+
+
+add：除了agent dog，其实agentdog那篇文章中还对比了几个其他guard模型
+
+可以将trustworthy指标拓展为可以指定guard模型的，估计需要为每种guard模型写evaluater器，然后compute的时候传入
+
+
+所以这种单轮多步的数据，或者轨迹，传统的guard模型可以进行测试且效果还可以吗？
+
+问题	传统 Guard 模型	AgentDoG
+能处理多步轨迹吗？	❌ 只看单轮内容	✅ 审计整个轨迹
+理解工具调用风险吗？	❌ 不理解	✅ 专门训练
+召回率	极低（<20%）	高（>95%）
+实际可用吗？	❌ 基本不可用	✅ 可用
+所以答案是：传统 Guard 模型可以测试，但效果非常差，基本不可用。这正是这篇论文存在的意义——填补了 Agent 安全领域的这个空白。
+
+
+
+所有的agent轨迹数据，只要不是多模态的，是文本的，agentdog都能进行安全评测吗
+
+
+
+我看他训练数据和测试效果的benchmark一般是针对的什么agent呢？api agent还是各种agent的都有？
+
+这是个很关键的问题。让我根据论文内容分析一下：
+AgentDoG 的适用范围
+理论上
+是的，只要是文本形式的 Agent 轨迹，AgentDoG 都能进行安全评测。论文明确提到：
+> "Currently, the input of AgentDoG is confined to text-based trajectories."
+实际上
+AgentDoG 的训练数据和测试 benchmark 主要针对 API/Tool-use Agent。
+训练数据来源
+论文中提到工具库主要来自：
+数据源	工具数量	类型
+ToolBench	大量	API 调用工具
+ToolAlpaca	大量	API 调用工具
+合并后	~10,000 个工具	主要是 API 类
+工具覆盖的功能类型：
+信息检索
+计算
+内容处理
+外部 API 调用
+测试 Benchmark 对比
+Benchmark	工具数量	Agent 类型
+R-Judge	114 个工具	Tool-use Agent
+ASSE-Safety	180 个工具	Tool-use Agent
+ASSE-Security	239 个工具	Tool-use Agent
+ATBench（本文）	1,575 个工具	Tool-use Agent
+可以看到，所有这些 benchmark 都是针对 Tool-use / API Agent 的。
+论文中的典型场景示例
+从论文的 Case Study 可以看到典型场景：
+场景	工具类型
+简历筛选	ATS_ReadResume、HR_Schedule_Interview
+金融分析	MarketQuoteFetcher
+微信转账	WeChatSearchContacts、WeChatSendRedPacket
+这些都是 API 调用型的 Agent。
+其他类型的 Agent 呢？
+Agent 类型	AgentDoG 支持情况
+API/Tool-use Agent	✅ 主要训练和测试对象
+代码执行 Agent	⚠️ 可能支持（如果以文本形式呈现代码）
+网页浏览 Agent	⚠️ 部分支持（DOM 操作可以文本化）
+GUI Agent（屏幕操作）	❌ 不支持（需要多模态）
+机器人/物理 Agent	❌ 不支持（需要多模态）
+论文在 Limitations 部分也承认：
+> "Currently, the input of AgentDoG is confined to text-based trajectories. Expanding AgentDoG's capabilities to support multimodal inputs is a crucial next step for safeguarding GUI-based agents."
+风险分类体系的适用性
+虽然训练数据主要是 API Agent，但论文提出的三维风险分类体系是通用的：
+维度	通用性
+风险来源	恶意用户指令、提示注入、环境误信息 → 适用于所有 Agent
+失败模式	推理错误、未经确认的操作、工具误用 → 适用于所有 Agent
+现实危害	隐私泄露、财务损失、系统安全 → 适用于所有场景
+总结
+问题	答案
+文本轨迹都能评测吗？	✅ 理论上可以
+训练/测试主要针对什么 Agent？	API/Tool-use Agent
+其他类型 Agent 效果如何？	⚠️ 未经验证，可能有泛化性问题
+GUI/多模态 Agent？	❌ 目前不支持
+所以如果你要用 AgentDoG 评测其他类型的 Agent（比如代码生成 Agent、网页浏览 Agent），它可能能用，但：
+效果未经论文验证
+可能需要针对性的数据进行微调
+多模态场景完全不支持
+
+
+
+我们的dataeval可能也有这种评测guard模型的能力？或许能够反映出agentdog在其他agent数据小类别底下的效果不佳？

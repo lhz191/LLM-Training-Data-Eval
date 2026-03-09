@@ -439,12 +439,17 @@ def compute_action_diversity(
         else:
             mapped_counts[action] += count
 
-    norm_entropy, _, n_types = _compute_entropy(mapped_counts)
+    norm_entropy, raw_entropy, n_types = _compute_entropy(mapped_counts)
     covered = set(mapped_counts.keys()) & PLAYWRIGHT_STANDARD_ACTIONS
     coverage = len(covered) / len(PLAYWRIGHT_STANDARD_ACTIONS)
+    
+    # 绝对熵：相对于所有 Playwright 标准动作的归一化
+    max_entropy_absolute = np.log2(len(PLAYWRIGHT_STANDARD_ACTIONS))
+    absolute_entropy = raw_entropy / max_entropy_absolute if max_entropy_absolute > 0 else 0.0
 
     return {
-        'action_type_entropy': norm_entropy,
+        'action_type_entropy': norm_entropy,  # 相对熵（相对于实际出现的动作数）
+        'action_type_entropy_absolute': absolute_entropy,  # 绝对熵（相对于所有标准动作）
         'action_type_coverage': coverage,
         'n_action_types': n_types,
         'action_distribution': dict(mapped_counts.most_common()),
@@ -702,7 +707,14 @@ def compute_diversity(
     domain_div = compute_domain_diversity(domains)
 
     print(f"\n📊 [4/5] 任务语义多样性 (Sentence Embedding)...")
-    model = SentenceTransformer(embedding_model)
+    # 优先使用本地模型
+    local_model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models', embedding_model)
+    if os.path.exists(local_model_path):
+        print(f"   使用本地模型: {local_model_path}")
+        model = SentenceTransformer(local_model_path)
+    else:
+        print(f"   从 HuggingFace 加载: {embedding_model}")
+        model = SentenceTransformer(embedding_model)
     print(f"   编码 {len(instructions)} 条指令...")
     instruction_embeddings = model.encode(
         instructions, show_progress_bar=True,
@@ -772,7 +784,8 @@ def _print_results(results, page_div, action_div, domain_div, task_div, expressi
 
     print(f"\n【2. 动作模式多样性】")
     print(f"  动作类型: {action_div['n_action_types']} 种  "
-          f"熵 = {action_div['action_type_entropy']:.4f}  "
+          f"相对熵 = {action_div['action_type_entropy']:.4f}  "
+          f"绝对熵 = {action_div['action_type_entropy_absolute']:.4f}  "
           f"覆盖率 = {action_div['action_type_coverage']:.0%}")
 
     print(f"\n【3. 域名多样性】")
@@ -826,7 +839,8 @@ def _save_summary(results: Dict[str, Any], output_file: str):
         "",
         "【2. 动作模式多样性】",
         f"  动作类型数: {action_div['n_action_types']} 种",
-        f"  归一化熵: {action_div['action_type_entropy']:.4f}",
+        f"  相对熵: {action_div['action_type_entropy']:.4f} (相对于实际出现的动作数)",
+        f"  绝对熵: {action_div['action_type_entropy_absolute']:.4f} (相对于所有20种标准动作)",
         f"  Playwright 标准动作覆盖率: {action_div['action_type_coverage']:.2%}",
         f"  动作分布: {action_div['action_distribution']}",
         "",

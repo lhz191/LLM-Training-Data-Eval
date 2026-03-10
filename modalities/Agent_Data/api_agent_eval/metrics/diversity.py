@@ -1,18 +1,61 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Diversity 多样性指标
+Diversity 多样性指标 — API Agent 数据集多维度多样性评估
 
-支持两种多样性计算方法：
-1. Vendi Score - 基于核矩阵特征值的多样性指标，需要采样
-2. KNN 平均距离 - 基于 K 近邻距离的多样性指标，可全量计算
+从七个维度评估数据集的多样性：
+
+    1. Embedding 语义多样性
+       对 query / tools / api_calls 三个字段分别生成 embedding，
+       用 Vendi Score（基于核矩阵特征值）或 KNN 平均距离衡量语义空间中的分散程度。
+       数值越高说明样本之间语义差异越大。
+
+    2. API 调用多样性
+       从四个粒度检测调用模式是否单一：
+       - 名称分布熵：所有 sample 调用的 API 名称分布是否均匀。
+         如果大量 sample 调用同一个 API，熵低 → 名称多样性差。
+       - 调用序列 bigram 熵：将每个 sample 的调用序列看成词序列，
+         提取相邻两个调用组成的 bigram（如 search → get_detail），
+         看这些 bigram 的分布是否丰富。大量 sample 走同一条链路 → 熵低。
+       - 参数 key 组合熵：每次 API 调用传了哪些参数名（如 (city, date) vs (query, limit)），
+         这些参数 key 的组合模式是否多样。所有调用都只传同样的参数集 → 熵低。
+       - 调用序列编辑距离：对所有 sample 的调用序列做全量两两 Levenshtein 编辑距离计算。
+         与序列熵互补——序列熵只看"有几种不同序列"，编辑距离能揭示看似不同的序列
+         其实非常接近。例：80% 的序列是 [search, get_detail]，20% 是
+         [search, get_detail, get_reviews]，序列熵认为"有 2 种"，但编辑距离仅 1。
+
+    3. 表达模式多样性 (Self-BLEU)
+       对所有 query 计算 Self-BLEU：每条 query 以其余 query 为参考计算 BLEU 分数后取均值。
+       Self-BLEU 高 → query 之间措辞高度相似（模板化）；Self-BLEU 低 → 表达多样。
+       对合成数据尤其有效，能检测 "Find me a...", "Search for..." 等模板化生成。
+
+    4. 参数值多样性
+       按参数名聚合所有 API 调用中实际传入的参数值，计算每个参数名下值的唯一率和熵。
+       合成数据中参数值容易坍缩（永远是相同的城市、日期、ID），
+       高唯一率 + 高熵 → 参数值丰富；低唯一率 + 低熵 → 值坍缩严重。
+
+    5. 域名/类别多样性
+       从 metadata 提取 category / domain 等字段，计算分布熵和 Gini 系数。
+       熵高 + Gini 低 → 类别分布均匀；熵低 + Gini 高 → 数据集中在少数类别。
+       ToolBench 有 49 个 category，xLAM 有分类信息，可直接利用。
+
+    6. 工具组合多样性
+       分析每个 sample 提供的工具集合（而非单个工具）：
+       - 工具集合分布熵：有多少种不同的工具集合搭配。
+       - 工具共现覆盖率：所有可能的工具两两共现中，实际出现了多少比例。
+       覆盖率高 → 工具搭配丰富；覆盖率低 → 只有少数固定组合。
+
+    7. 工具覆盖率
+       每个 sample 定义了若干可用工具，agent 实际只调用了部分。
+       覆盖率 = 实际调用工具数 / 可用工具数。
+       覆盖率普遍低 → 数据太简单或存在大量无关工具填充。
 
 使用方式:
     from diversity import compute_diversity
     from loaders import ToolBenchLoader
-    
+
     loader = ToolBenchLoader('/path/to/toolbench.json')
-    
+
     results = compute_diversity(
         data_iterator=loader.iterate(),
         dataset_name='ToolBench',
@@ -29,19 +72,18 @@ os.environ['OMP_NUM_THREADS'] = '32'
 os.environ['MKL_NUM_THREADS'] = '32'
 os.environ['NUMEXPR_NUM_THREADS'] = '32'
 
-import os
+import sys
 import json
 import math
 import time
 import random
+import itertools
 import numpy as np
 from collections import Counter
 from datetime import datetime
-from typing import Optional, Iterator, Dict, Any, List, Tuple
+from typing import Optional, Iterator, Dict, Any, List, Tuple, Set
 from tqdm import tqdm
 
-import sys
-import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_types import APIAgentSample
@@ -743,6 +785,381 @@ def _compute_gini(values: List[float]) -> float:
     return (2 * weighted_sum) / (n * total) - (n + 1) / n
 
 
+def _levenshtein(seq1: List[str], seq2: List[str]) -> int:
+    """列表级别的 Levenshtein 编辑距离"""
+    m, n = len(seq1), len(seq2)
+    if m == 0:
+        return n
+    if n == 0:
+        return m
+    prev = list(range(n + 1))
+    curr = [0] * (n + 1)
+    for i in range(1, m + 1):
+        curr[0] = i
+        for j in range(1, n + 1):
+            cost = 0 if seq1[i - 1] == seq2[j - 1] else 1
+            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+        prev, curr = curr, prev
+    return prev[n]
+
+
+# =============================================================================
+# 调用序列多样性（编辑距离 + 结构分析）
+# =============================================================================
+
+def compute_call_sequence_diversity(
+    call_sequences: List[List[str]],
+) -> Dict[str, Any]:
+    """
+    计算 API 调用序列间的结构多样性。
+
+    与序列熵互补：序列熵只看"有多少种不同序列"，
+    编辑距离能揭示看似不同的序列其实非常接近。
+
+    例：如果 80% 的 sample 调用链是 [search, get_detail, finish]，
+    另外 20% 是 [search, get_detail, get_reviews, finish]，
+    序列熵会认为"有 2 种不同序列"，但编辑距离会揭示
+    这两种序列其实非常接近（编辑距离仅 1），实际多样性很低。
+
+    子指标：
+    1. 唯一序列比例
+    2. 序列长度变异系数
+    3. 序列间平均编辑距离（全量 O(N^2)）
+    4. 序列间平均归一化编辑距离
+    """
+    n = len(call_sequences)
+    if n == 0:
+        return {
+            'n_sequences': 0,
+            'unique_sequence_ratio': 0.0,
+            'length_cv': 0.0,
+            'length_mean': 0.0,
+            'length_std': 0.0,
+            'avg_edit_distance': 0.0,
+            'avg_normalized_edit_distance': 0.0,
+        }
+
+    # --- 唯一序列比例 ---
+    seq_strs = ["|".join(seq) for seq in call_sequences]
+    n_unique = len(set(seq_strs))
+    unique_ratio = n_unique / n
+
+    # --- 序列长度统计 ---
+    lengths = [len(seq) for seq in call_sequences]
+    length_mean = float(np.mean(lengths))
+    length_std = float(np.std(lengths))
+    length_cv = length_std / length_mean if length_mean > 0 else 0.0
+
+    # --- 序列间编辑距离（全量） ---
+    avg_edit_dist = 0.0
+    avg_norm_edit_dist = 0.0
+    if n >= 2:
+        edit_dists = []
+        norm_edit_dists = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                d = _levenshtein(call_sequences[i], call_sequences[j])
+                edit_dists.append(d)
+                max_len = max(len(call_sequences[i]), len(call_sequences[j]), 1)
+                norm_edit_dists.append(d / max_len)
+        avg_edit_dist = float(np.mean(edit_dists))
+        avg_norm_edit_dist = float(np.mean(norm_edit_dists))
+
+    return {
+        'n_sequences': n,
+        'n_unique_sequences': n_unique,
+        'unique_sequence_ratio': unique_ratio,
+        'length_mean': length_mean,
+        'length_std': length_std,
+        'length_cv': length_cv,
+        'avg_edit_distance': avg_edit_dist,
+        'avg_normalized_edit_distance': avg_norm_edit_dist,
+    }
+
+
+# =============================================================================
+# Self-BLEU 表达模式多样性
+# =============================================================================
+
+def compute_expression_diversity(
+    texts: List[str],
+    batch_size: int = 200,
+) -> Dict[str, Any]:
+    """
+    计算 Self-BLEU 表达模式多样性。
+    Self-BLEU 高 → 文本模板化严重；Self-BLEU 低 → 表达多样。
+
+    对合成数据特别有效：能检测 "Find me a...", "Search for..." 等模板化 query。
+    """
+    from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+
+    n = len(texts)
+    if n < 2:
+        return {'self_bleu': 1.0, 'expression_diversity': 0.0, 'n_texts': n}
+
+    tokenized = [t.lower().split() for t in texts]
+    smoothing = SmoothingFunction().method1
+
+    if n > batch_size:
+        batch_bleu_scores = []
+        for start in range(0, n, batch_size):
+            batch = tokenized[start:start + batch_size]
+            scores = []
+            for i, hyp in enumerate(batch):
+                refs = [batch[j] for j in range(len(batch)) if j != i]
+                if hyp and refs:
+                    scores.append(sentence_bleu(refs, hyp, smoothing_function=smoothing))
+            if scores:
+                batch_bleu_scores.append(np.mean(scores))
+        self_bleu = float(np.mean(batch_bleu_scores)) if batch_bleu_scores else 1.0
+    else:
+        scores = []
+        for i, hyp in enumerate(tokenized):
+            refs = [tokenized[j] for j in range(n) if j != i]
+            if hyp and refs:
+                scores.append(sentence_bleu(refs, hyp, smoothing_function=smoothing))
+        self_bleu = float(np.mean(scores)) if scores else 1.0
+
+    return {
+        'self_bleu': self_bleu,
+        'expression_diversity': 1.0 - self_bleu,
+        'n_texts': n,
+    }
+
+
+# =============================================================================
+# 参数值多样性
+# =============================================================================
+
+def compute_param_value_diversity(
+    samples: List[APIAgentSample],
+) -> Dict[str, Any]:
+    """
+    分析 API 调用中参数值的多样性。
+
+    合成数据中参数值容易坍缩（永远是相同的城市、日期、ID），
+    这里按参数名聚合值的唯一率和熵。
+    """
+    param_values: Dict[str, Counter] = {}
+    n_calls = 0
+
+    for sample in samples:
+        for call in sample.api_calls:
+            name = (call.name or "").strip()
+            if not name or name.lower() in ("finish", "finalaction"):
+                continue
+            n_calls += 1
+            if not isinstance(call.arguments, dict):
+                continue
+            for k, v in call.arguments.items():
+                v_str = str(v)
+                if k not in param_values:
+                    param_values[k] = Counter()
+                param_values[k][v_str] += 1
+
+    if not param_values:
+        return {
+            'n_calls': n_calls,
+            'n_param_keys': 0,
+            'avg_value_unique_ratio': 0.0,
+            'avg_value_entropy_normalized': 0.0,
+            'per_param': {},
+        }
+
+    per_param = {}
+    unique_ratios = []
+    entropies = []
+
+    for k, counter in sorted(param_values.items(), key=lambda x: -sum(x[1].values())):
+        total = sum(counter.values())
+        n_unique = len(counter)
+        ratio = n_unique / total if total > 0 else 0.0
+        ent_norm, _, _ = _compute_entropy(counter)
+
+        unique_ratios.append(ratio)
+        entropies.append(ent_norm)
+
+        per_param[k] = {
+            'n_unique_values': n_unique,
+            'n_total': total,
+            'unique_ratio': ratio,
+            'entropy_normalized': ent_norm,
+            'top_values': dict(counter.most_common(5)),
+        }
+
+    return {
+        'n_calls': n_calls,
+        'n_param_keys': len(param_values),
+        'avg_value_unique_ratio': float(np.mean(unique_ratios)),
+        'avg_value_entropy_normalized': float(np.mean(entropies)),
+        'per_param': per_param,
+    }
+
+
+# =============================================================================
+# 域名 / 类别多样性
+# =============================================================================
+
+def compute_category_diversity(
+    samples: List[APIAgentSample],
+) -> Dict[str, Any]:
+    """
+    分析数据集的 domain / category 分布多样性。
+
+    从 metadata 中提取 category、domain、source 等字段。
+    """
+    category_counter = Counter()
+    domain_counter = Counter()
+
+    for sample in samples:
+        meta = sample.metadata or {}
+        cat = meta.get('category') or meta.get('api_category') or meta.get('type', '')
+        if cat:
+            category_counter[str(cat)] += 1
+        domain = meta.get('domain') or meta.get('source') or meta.get('api_provider', '')
+        if domain:
+            domain_counter[str(domain)] += 1
+
+    results: Dict[str, Any] = {}
+
+    if category_counter:
+        cat_ent, _, n_cats = _compute_entropy(category_counter)
+        cat_gini = _compute_gini(list(category_counter.values()))
+        results['category'] = {
+            'n_unique': n_cats,
+            'entropy_normalized': cat_ent,
+            'gini': cat_gini,
+            'distribution': dict(category_counter.most_common(30)),
+        }
+    else:
+        results['category'] = None
+
+    if domain_counter:
+        dom_ent, _, n_doms = _compute_entropy(domain_counter)
+        dom_gini = _compute_gini(list(domain_counter.values()))
+        results['domain'] = {
+            'n_unique': n_doms,
+            'entropy_normalized': dom_ent,
+            'gini': dom_gini,
+            'distribution': dict(domain_counter.most_common(30)),
+        }
+    else:
+        results['domain'] = None
+
+    return results
+
+
+# =============================================================================
+# 工具组合多样性
+# =============================================================================
+
+def compute_tool_combination_diversity(
+    samples: List[APIAgentSample],
+) -> Dict[str, Any]:
+    """
+    分析工具组合（共现）模式的多样性。
+
+    - 每个 sample 提供了哪些工具？这些工具集合的分布如何？
+    - 工具之间的共现关系是否丰富？
+    """
+    toolset_counter = Counter()
+    cooccurrence: Counter = Counter()
+    n_samples_with_tools = 0
+
+    for sample in samples:
+        tool_names = sorted(set(t.name for t in sample.tools if t.name))
+        if not tool_names:
+            continue
+        n_samples_with_tools += 1
+        toolset_counter[tuple(tool_names)] += 1
+        for pair in itertools.combinations(tool_names, 2):
+            cooccurrence[pair] += 1
+
+    if n_samples_with_tools == 0:
+        return {
+            'n_samples_with_tools': 0,
+            'n_unique_toolsets': 0,
+            'toolset_unique_ratio': 0.0,
+            'toolset_entropy_normalized': 0.0,
+            'n_unique_cooccurrences': 0,
+            'top_toolsets': {},
+            'top_cooccurrences': {},
+        }
+
+    toolset_ent, _, n_unique_toolsets = _compute_entropy(toolset_counter)
+
+    all_tools = set()
+    for ts in toolset_counter.keys():
+        all_tools.update(ts)
+    max_pairs = len(all_tools) * (len(all_tools) - 1) // 2
+    cooccurrence_coverage = len(cooccurrence) / max_pairs if max_pairs > 0 else 0.0
+
+    return {
+        'n_samples_with_tools': n_samples_with_tools,
+        'n_unique_toolsets': n_unique_toolsets,
+        'toolset_unique_ratio': n_unique_toolsets / n_samples_with_tools,
+        'toolset_entropy_normalized': toolset_ent,
+        'n_unique_cooccurrences': len(cooccurrence),
+        'max_possible_cooccurrences': max_pairs,
+        'cooccurrence_coverage': cooccurrence_coverage,
+        'top_toolsets': {str(k): v for k, v in toolset_counter.most_common(10)},
+        'top_cooccurrences': {str(k): v for k, v in cooccurrence.most_common(10)},
+    }
+
+
+# =============================================================================
+# 工具覆盖率
+# =============================================================================
+
+def compute_tool_coverage(
+    samples: List[APIAgentSample],
+) -> Dict[str, Any]:
+    """
+    分析每个 sample 中实际调用的工具占可用工具的比例。
+
+    覆盖率低 → agent 只用了一小部分工具（可能是数据太简单或工具冗余）。
+    """
+    coverages = []
+    n_skipped = 0
+
+    for sample in samples:
+        available = set(t.name for t in sample.tools if t.name)
+        if not available:
+            n_skipped += 1
+            continue
+        called = set()
+        for call in sample.api_calls:
+            name = (call.name or "").strip()
+            if name and name.lower() not in ("finish", "finalaction"):
+                called.add(name)
+        coverage = len(called & available) / len(available)
+        coverages.append(coverage)
+
+    if not coverages:
+        return {
+            'n_samples': 0,
+            'mean_coverage': 0.0,
+            'std_coverage': 0.0,
+            'median_coverage': 0.0,
+        }
+
+    arr = np.asarray(coverages)
+    hist_bins = [0, 0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.01]
+    hist_counts, _ = np.histogram(arr, bins=hist_bins)
+    hist_labels = ['0-10%', '10-20%', '20-30%', '30-50%', '50-70%', '70-100%', '100%']
+
+    return {
+        'n_samples': len(coverages),
+        'n_skipped': n_skipped,
+        'mean_coverage': float(np.mean(arr)),
+        'std_coverage': float(np.std(arr)),
+        'median_coverage': float(np.median(arr)),
+        'min_coverage': float(np.min(arr)),
+        'max_coverage': float(np.max(arr)),
+        'distribution': {label: int(cnt) for label, cnt in zip(hist_labels, hist_counts)},
+    }
+
+
 # =============================================================================
 # 主函数
 # =============================================================================
@@ -949,9 +1366,87 @@ def compute_diversity(
     print(f"  唯一序列数: {n_unique_seqs}, 序列熵(归一化): {seq_ent_norm:.4f}")
     print(f"  唯一参数组合: {n_unique_combos}, 参数熵(归一化): {param_ent_norm:.4f}")
     print()
-    
+
+    # Step 3.5: 调用序列编辑距离分析
+    print("-" * 50)
+    print("Step 3.5: 计算调用序列编辑距离多样性")
+    print("-" * 50)
+    all_call_sequences = []
+    for sample in samples:
+        names = []
+        for call in sample.api_calls:
+            name = (call.name or "").strip()
+            if name and name.lower() not in ("finish", "finalaction"):
+                names.append(name)
+        if names:
+            all_call_sequences.append(names)
+    call_seq_div = compute_call_sequence_diversity(all_call_sequences)
+    api_call_diversity["call_sequence_edit_distance"] = call_seq_div
+    print(f"  唯一序列比例: {call_seq_div['unique_sequence_ratio']:.4f}")
+    print(f"  序列长度 CV: {call_seq_div['length_cv']:.4f}")
+    print(f"  平均归一化编辑距离: {call_seq_div['avg_normalized_edit_distance']:.4f}")
+    print()
+
+    # Step 4: 表达模式多样性 (Self-BLEU on queries)
+    print("-" * 50)
+    print("Step 4: 计算 Query 表达模式多样性 (Self-BLEU)")
+    print("-" * 50)
+    queries = [s.query for s in samples if s.query]
+    expression_div = compute_expression_diversity(queries)
+    print(f"  Self-BLEU: {expression_div['self_bleu']:.4f}, "
+          f"表达多样性: {expression_div['expression_diversity']:.4f}")
+    print()
+
+    # Step 5: 参数值多样性
+    print("-" * 50)
+    print("Step 5: 计算参数值多样性")
+    print("-" * 50)
+    param_value_div = compute_param_value_diversity(samples)
+    print(f"  参数 key 数: {param_value_div['n_param_keys']}")
+    print(f"  平均值唯一率: {param_value_div['avg_value_unique_ratio']:.4f}")
+    print(f"  平均值熵(归一化): {param_value_div['avg_value_entropy_normalized']:.4f}")
+    print()
+
+    # Step 6: 域名/类别多样性
+    print("-" * 50)
+    print("Step 6: 计算域名/类别多样性")
+    print("-" * 50)
+    category_div = compute_category_diversity(samples)
+    if category_div.get('category'):
+        c = category_div['category']
+        print(f"  类别数: {c['n_unique']}, 熵(归一化): {c['entropy_normalized']:.4f}, "
+              f"Gini: {c['gini']:.4f}")
+    else:
+        print("  (metadata 中无 category 字段)")
+    if category_div.get('domain'):
+        d = category_div['domain']
+        print(f"  域名数: {d['n_unique']}, 熵(归一化): {d['entropy_normalized']:.4f}, "
+              f"Gini: {d['gini']:.4f}")
+    else:
+        print("  (metadata 中无 domain 字段)")
+    print()
+
+    # Step 7: 工具组合多样性
+    print("-" * 50)
+    print("Step 7: 计算工具组合多样性")
+    print("-" * 50)
+    tool_combo_div = compute_tool_combination_diversity(samples)
+    print(f"  唯一工具集合数: {tool_combo_div['n_unique_toolsets']}")
+    print(f"  工具集合熵(归一化): {tool_combo_div['toolset_entropy_normalized']:.4f}")
+    print(f"  共现覆盖率: {tool_combo_div.get('cooccurrence_coverage', 0):.4f}")
+    print()
+
+    # Step 8: 工具覆盖率
+    print("-" * 50)
+    print("Step 8: 计算工具覆盖率")
+    print("-" * 50)
+    tool_cov = compute_tool_coverage(samples)
+    print(f"  平均覆盖率: {tool_cov['mean_coverage']:.4f}")
+    print(f"  中位覆盖率: {tool_cov['median_coverage']:.4f}")
+    print()
+
     total_time = time.time() - start_time
-    
+
     # 汇总结果
     results = {
         "dataset": dataset_name,
@@ -960,12 +1455,18 @@ def compute_diversity(
         "embedding_model": embedding_model,
         "timestamp": datetime.now().isoformat(),
         "total_time_seconds": total_time,
+        "n_samples": len(samples),
         "embedding_diversity_score": diversity_score,
         "per_field_diversity": per_field_results,
         **diversity_result,
         "api_call_diversity": api_call_diversity,
+        "expression_diversity": expression_div,
+        "param_value_diversity": param_value_div,
+        "category_diversity": category_div,
+        "tool_combination_diversity": tool_combo_div,
+        "tool_coverage": tool_cov,
     }
-    
+
     # 保存结果
     if output_file:
         output_dir = os.path.dirname(output_file)
@@ -974,25 +1475,61 @@ def compute_diversity(
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
         print(f"结果已保存到: {output_file}")
-    
+
     # 打印摘要
     print()
     print("=" * 70)
     print(f"评估完成！总耗时 {total_time:.1f} 秒")
     print("=" * 70)
     print()
-    print(f"数据集: {dataset_name} | 方法: {method}")
+    print(f"数据集: {dataset_name} | 样本数: {len(samples):,} | 方法: {method}")
     print()
-    print("【Embedding 多样性（按字段）】")
+    print("【1. Embedding 语义多样性（按字段）】")
     for f in FIELDS:
         print(f"  {f:12s}: {per_field_results[f]['score']:.6f}")
     print()
-    print("【API 调用多样性】")
-    print(f"  API 名称熵(归一化): {name_ent_norm:.6f}")
-    print(f"  调用序列熵(归一化): {seq_ent_norm:.6f}")
-    print(f"  参数组合熵(归一化): {param_ent_norm:.6f}")
+    print("【2. API 调用多样性】")
+    print(f"  API 名称熵(归一化):   {name_ent_norm:.6f}  (唯一 {n_unique_apis} 个)")
+    print(f"  调用序列熵(归一化):   {seq_ent_norm:.6f}  (唯一 {n_unique_seqs} 个)")
+    print(f"  Bigram 熵(归一化):    {bigram_ent_norm:.6f}  (唯一 {n_unique_bigrams} 个)")
+    print(f"  参数 key 组合熵:      {param_ent_norm:.6f}  (唯一 {n_unique_combos} 个)")
+    print(f"  序列唯一率:           {call_seq_div['unique_sequence_ratio']:.6f}")
+    print(f"  序列长度 CV:          {call_seq_div['length_cv']:.6f}")
+    print(f"  平均归一化编辑距离:   {call_seq_div['avg_normalized_edit_distance']:.6f}")
     print()
-    
+    print("【3. 表达模式多样性 (Self-BLEU)】")
+    print(f"  Self-BLEU:            {expression_div['self_bleu']:.6f}")
+    print(f"  表达多样性:           {expression_div['expression_diversity']:.6f}")
+    print()
+    print("【4. 参数值多样性】")
+    print(f"  平均值唯一率:         {param_value_div['avg_value_unique_ratio']:.6f}")
+    print(f"  平均值熵(归一化):     {param_value_div['avg_value_entropy_normalized']:.6f}")
+    print()
+    print("【5. 域名/类别多样性】")
+    if category_div.get('category'):
+        c = category_div['category']
+        print(f"  类别熵(归一化):       {c['entropy_normalized']:.6f}  ({c['n_unique']} 类)")
+        print(f"  类别 Gini:            {c['gini']:.6f}")
+    else:
+        print("  (无 category 信息)")
+    if category_div.get('domain'):
+        d = category_div['domain']
+        print(f"  域名熵(归一化):       {d['entropy_normalized']:.6f}  ({d['n_unique']} 域)")
+        print(f"  域名 Gini:            {d['gini']:.6f}")
+    else:
+        print("  (无 domain 信息)")
+    print()
+    print("【6. 工具组合多样性】")
+    print(f"  唯一工具集合:         {tool_combo_div['n_unique_toolsets']}")
+    print(f"  工具集合唯一率:       {tool_combo_div['toolset_unique_ratio']:.6f}")
+    print(f"  工具集合熵(归一化):   {tool_combo_div['toolset_entropy_normalized']:.6f}")
+    print(f"  共现覆盖率:           {tool_combo_div.get('cooccurrence_coverage', 0):.6f}")
+    print()
+    print("【7. 工具覆盖率】")
+    print(f"  平均覆盖率:           {tool_cov['mean_coverage']:.6f}")
+    print(f"  中位覆盖率:           {tool_cov['median_coverage']:.6f}")
+    print()
+
     return results
 
 

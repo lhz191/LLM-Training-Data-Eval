@@ -3,14 +3,15 @@
 """
 Diversity Metric - GUI Agent 数据集多样性评估
 
-适用于自然数据和合成数据的通用多样性指标，从五个维度评估数据集的多样性。
+适用于自然数据和合成数据的通用多样性指标，从六个维度评估数据集的多样性。
 
 评估维度:
     1. 页面结构多样性 - APTED 树编辑距离 + Vendi Score
     2. 动作模式多样性 - 动作类型分布熵、覆盖率
-    3. 域名/网站多样性 - 域名覆盖广度和分布均匀度
-    4. 任务语义多样性 - 基于 Sentence Embedding 的语义距离
-    5. 表达模式多样性 - Self-BLEU (检测 Teacher Bias / 模板化表述)
+    3. 轨迹序列多样性 - Bigram 熵、轨迹间编辑距离、长度变异系数
+    4. 域名/网站多样性 - 域名覆盖广度和分布均匀度
+    5. 任务语义多样性 - 基于 Sentence Embedding 的语义距离
+    6. 表达模式多样性 - Self-BLEU (检测 Teacher Bias / 模板化表述)
 
 论文依据:
     [1] Corazza et al. "Web Application Testing: Using Tree Kernels to
@@ -457,6 +458,126 @@ def compute_action_diversity(
 
 
 # =============================================================================
+# 2.5 轨迹序列多样性
+# =============================================================================
+
+def compute_trajectory_diversity(
+    action_sequences: List[List[str]],
+) -> Dict[str, Any]:
+    """
+    计算轨迹序列多样性。
+
+    与 action_diversity 互补：action_diversity 衡量"用了哪些动作类型"，
+    trajectory_diversity 衡量"动作如何组合成序列"。
+
+    两个数据集可能 action type 分布完全一致，但轨迹模式截然不同：
+    - 数据集 A：全是 click→click→click（单调模式）
+    - 数据集 B：click→type→scroll→select→click（丰富组合）
+
+    子指标：
+    1. Bigram 多样性：有多少种不同的 (action_i, action_i+1) 转移模式
+    2. Bigram 熵：转移模式分布的均匀程度
+    3. 轨迹长度变异系数：轨迹长度是否多样（合成数据常见长度集中问题）
+    4. 唯一轨迹比例：完全相同的 action 序列占比
+    5. 轨迹间编辑距离：样本间 action 序列的结构差异（全量计算）
+
+    Args:
+        action_sequences: 每条 record 的 action_type 序列，如 [["click","type","click"], ...]
+
+    Returns:
+        包含轨迹序列多样性指标的字典
+    """
+    n = len(action_sequences)
+    if n == 0:
+        return {
+            'bigram_entropy': 0.0,
+            'n_unique_bigrams': 0,
+            'bigram_coverage': 0.0,
+            'length_cv': 0.0,
+            'length_mean': 0.0,
+            'length_std': 0.0,
+            'unique_trajectory_ratio': 0.0,
+            'avg_edit_distance': 0.0,
+            'avg_normalized_edit_distance': 0.0,
+            'n_trajectories': 0,
+        }
+
+    # --- 1 & 2: Bigram 多样性和熵 ---
+    bigrams = Counter()
+    for seq in action_sequences:
+        for i in range(len(seq) - 1):
+            bigrams[(seq[i], seq[i + 1])] += 1
+
+    bigram_entropy, _, n_unique_bigrams = _compute_entropy(bigrams)
+
+    possible_types = set()
+    for seq in action_sequences:
+        possible_types.update(seq)
+    max_possible_bigrams = len(possible_types) ** 2
+    bigram_coverage = n_unique_bigrams / max_possible_bigrams if max_possible_bigrams > 0 else 0.0
+
+    # --- 3: 轨迹长度变异系数 ---
+    lengths = [len(seq) for seq in action_sequences]
+    length_mean = float(np.mean(lengths))
+    length_std = float(np.std(lengths))
+    length_cv = length_std / length_mean if length_mean > 0 else 0.0
+
+    # --- 4: 唯一轨迹比例 ---
+    trajectory_strs = ["|".join(seq) for seq in action_sequences]
+    unique_trajectories = len(set(trajectory_strs))
+    unique_trajectory_ratio = unique_trajectories / n
+
+    # --- 5: 轨迹间编辑距离（全量） ---
+    avg_edit_dist = 0.0
+    avg_norm_edit_dist = 0.0
+    if n >= 2:
+        total_pairs = n * (n - 1) // 2
+        edit_dists = []
+        norm_edit_dists = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                d = _levenshtein(action_sequences[i], action_sequences[j])
+                edit_dists.append(d)
+                max_len = max(len(action_sequences[i]), len(action_sequences[j]), 1)
+                norm_edit_dists.append(d / max_len)
+        avg_edit_dist = float(np.mean(edit_dists))
+        avg_norm_edit_dist = float(np.mean(norm_edit_dists))
+
+    return {
+        'bigram_entropy': bigram_entropy,
+        'n_unique_bigrams': n_unique_bigrams,
+        'bigram_coverage': bigram_coverage,
+        'length_cv': length_cv,
+        'length_mean': length_mean,
+        'length_std': length_std,
+        'unique_trajectory_ratio': unique_trajectory_ratio,
+        'n_unique_trajectories': unique_trajectories,
+        'avg_edit_distance': avg_edit_dist,
+        'avg_normalized_edit_distance': avg_norm_edit_dist,
+        'n_trajectories': n,
+        'top_bigrams': dict(bigrams.most_common(10)),
+    }
+
+
+def _levenshtein(seq1: List[str], seq2: List[str]) -> int:
+    """列表级别的 Levenshtein 编辑距离"""
+    m, n = len(seq1), len(seq2)
+    if m == 0:
+        return n
+    if n == 0:
+        return m
+    prev = list(range(n + 1))
+    curr = [0] * (n + 1)
+    for i in range(1, m + 1):
+        curr[0] = i
+        for j in range(1, n + 1):
+            cost = 0 if seq1[i - 1] == seq2[j - 1] else 1
+            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+        prev, curr = curr, prev
+    return prev[n]
+
+
+# =============================================================================
 # 3. 域名/网站多样性
 # =============================================================================
 
@@ -611,7 +732,7 @@ def compute_diversity(
     one_page_per_record: bool = True,
 ) -> Dict[str, Any]:
     """
-    计算 GUI Agent 数据集多样性指标 (五个维度)。
+    计算 GUI Agent 数据集多样性指标 (六个维度)。
 
     Args:
         data_iterator: Record 迭代器 (来自 Loader)
@@ -628,7 +749,7 @@ def compute_diversity(
         one_page_per_record: 每个 record 只取第一个 HTML（大幅减少 APTED 计算量）
 
     Returns:
-        包含五个维度指标的字典
+        包含六个维度指标的字典
     """
     print("=" * 70)
     print("Diversity Evaluation" + (" (并行模式)" if parallel else ""))
@@ -649,6 +770,7 @@ def compute_diversity(
     domains = Counter()
     page_htmls = []
     instructions = []
+    action_sequences = []
 
     for record in data_iterator:
         if max_samples and record_count >= max_samples:
@@ -661,12 +783,14 @@ def compute_diversity(
         if record.instruction:
             instructions.append(record.instruction)
 
-        # 收集页面 HTML（可选：每个 record 只取第一个，大幅减少 APTED 计算量）
+        record_action_seq = []
         record_page_collected = False
         for action in record.actions:
             total_actions += 1
             if action.action_type:
-                action_types[action.action_type.lower()] += 1
+                action_lower = action.action_type.lower()
+                action_types[action_lower] += 1
+                record_action_seq.append(action_lower)
             if action.cleaned_html:
                 if one_page_per_record:
                     # 每个 record 只取第一个有 HTML 的 action
@@ -676,6 +800,9 @@ def compute_diversity(
                 else:
                     # 收集所有 action 的 HTML
                     page_htmls.append(action.cleaned_html)
+
+        if record_action_seq:
+            action_sequences.append(record_action_seq)
 
         if progress_interval and record_count % progress_interval == 0:
             elapsed = time.time() - start_time
@@ -691,22 +818,25 @@ def compute_diversity(
     print(f"\n数据收集完成: {record_count:,} records, {total_actions:,} actions, "
           f"{len(page_htmls):,} pages ({collect_time:.1f}s)")
 
-    # ==================== 计算五个维度 ====================
+    # ==================== 计算六个维度 ====================
 
-    print(f"\n📊 [1/5] 页面结构多样性 (APTED + Vendi Score)...")
+    print(f"\n📊 [1/6] 页面结构多样性 (APTED + Vendi Score)...")
     page_div = compute_page_diversity(page_htmls, parallel=parallel, max_workers=max_workers)
 
-    print(f"\n📊 [2/5] 动作模式多样性...")
+    print(f"\n📊 [2/6] 动作模式多样性...")
     action_div = compute_action_diversity(
         action_types,
         action_mapping=action_mapping,
         skip_actions=skip_actions,
     )
 
-    print(f"📊 [3/5] 域名多样性...")
+    print(f"\n📊 [3/6] 轨迹序列多样性 (Bigram + Edit Distance)...")
+    trajectory_div = compute_trajectory_diversity(action_sequences)
+
+    print(f"\n📊 [4/6] 域名多样性...")
     domain_div = compute_domain_diversity(domains)
 
-    print(f"\n📊 [4/5] 任务语义多样性 (Sentence Embedding)...")
+    print(f"\n📊 [5/6] 任务语义多样性 (Sentence Embedding)...
     # 优先使用本地模型
     local_model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models', embedding_model)
     if os.path.exists(local_model_path):
@@ -722,7 +852,7 @@ def compute_diversity(
     )
     task_div = compute_task_diversity(instruction_embeddings)
 
-    print(f"\n📊 [5/5] 表达模式多样性 (Self-BLEU)...")
+    print(f"\n📊 [6/6] 表达模式多样性 (Self-BLEU)...")
     expression_div = compute_expression_diversity(instructions)
 
     elapsed = time.time() - start_time
@@ -735,6 +865,7 @@ def compute_diversity(
         'dimensions': {
             'page_diversity': page_div,
             'action_diversity': action_div,
+            'trajectory_diversity': trajectory_div,
             'domain_diversity': domain_div,
             'task_diversity': task_div,
             'expression_diversity': expression_div,
@@ -750,7 +881,7 @@ def compute_diversity(
     }
 
     # ==================== 输出 ====================
-    _print_results(results, page_div, action_div, domain_div, task_div, expression_div, elapsed)
+    _print_results(results, page_div, action_div, trajectory_div, domain_div, task_div, expression_div, elapsed)
 
     if output_file:
         os.makedirs(os.path.dirname(output_file) or '.', exist_ok=True)
@@ -766,7 +897,7 @@ def compute_diversity(
     return results
 
 
-def _print_results(results, page_div, action_div, domain_div, task_div, expression_div, elapsed):
+def _print_results(results, page_div, action_div, trajectory_div, domain_div, task_div, expression_div, elapsed):
     """打印结果摘要。"""
     s = results['summary']
     print()
@@ -788,16 +919,25 @@ def _print_results(results, page_div, action_div, domain_div, task_div, expressi
           f"绝对熵 = {action_div['action_type_entropy_absolute']:.4f}  "
           f"覆盖率 = {action_div['action_type_coverage']:.0%}")
 
-    print(f"\n【3. 域名多样性】")
+    print(f"\n【3. 轨迹序列多样性】 Bigram + Edit Distance")
+    print(f"  Bigram 熵 = {trajectory_div['bigram_entropy']:.4f}  "
+          f"唯一 bigram = {trajectory_div['n_unique_bigrams']}  "
+          f"覆盖率 = {trajectory_div['bigram_coverage']:.4f}")
+    print(f"  唯一轨迹比例 = {trajectory_div['unique_trajectory_ratio']:.4f}  "
+          f"长度 CV = {trajectory_div['length_cv']:.4f}  "
+          f"(均值={trajectory_div['length_mean']:.1f}, 标准差={trajectory_div['length_std']:.1f})")
+    print(f"  归一化编辑距离 = {trajectory_div['avg_normalized_edit_distance']:.4f}")
+
+    print(f"\n【4. 域名多样性】")
     print(f"  唯一域名: {domain_div['n_unique_domains']} 个  "
           f"熵 = {domain_div['domain_entropy']:.4f}  "
           f"Gini = {domain_div['domain_gini']:.4f}")
 
-    print(f"\n【4. 任务语义多样性】")
+    print(f"\n【5. 任务语义多样性】")
     print(f"  语义多样性 = {task_div['semantic_diversity']:.4f}  "
           f"(1 - 平均余弦相似度 {task_div['avg_pairwise_similarity']:.4f})")
 
-    print(f"\n【5. 表达模式多样性】 Self-BLEU")
+    print(f"\n【6. 表达模式多样性】 Self-BLEU")
     print(f"  Self-BLEU = {expression_div['self_bleu']:.4f}  "
           f"表达多样性 = {expression_div['expression_diversity']:.4f}")
     print()
@@ -809,6 +949,7 @@ def _save_summary(results: Dict[str, Any], output_file: str):
     dims = results['dimensions']
     page_div = dims['page_diversity']
     action_div = dims['action_diversity']
+    trajectory_div = dims['trajectory_diversity']
     domain_div = dims['domain_diversity']
     task_div = dims['task_diversity']
     expression_div = dims['expression_diversity']
@@ -827,7 +968,7 @@ def _save_summary(results: Dict[str, Any], output_file: str):
         f"平均每条记录动作数: {s['avg_actions_per_record']:.2f}",
         "",
         "=" * 70,
-        "五维度多样性指标",
+        "六维度多样性指标",
         "=" * 70,
         "",
         "【1. 页面结构多样性】 APTED + Vendi Score",
@@ -844,7 +985,16 @@ def _save_summary(results: Dict[str, Any], output_file: str):
         f"  Playwright 标准动作覆盖率: {action_div['action_type_coverage']:.2%}",
         f"  动作分布: {action_div['action_distribution']}",
         "",
-        "【3. 域名多样性】",
+        "【3. 轨迹序列多样性】 Bigram + Edit Distance",
+        f"  Bigram 熵: {trajectory_div['bigram_entropy']:.4f}",
+        f"  唯一 bigram 数: {trajectory_div['n_unique_bigrams']}",
+        f"  Bigram 覆盖率: {trajectory_div['bigram_coverage']:.4f}",
+        f"  唯一轨迹比例: {trajectory_div['unique_trajectory_ratio']:.4f} ({trajectory_div.get('n_unique_trajectories', 0)}/{trajectory_div['n_trajectories']})",
+        f"  轨迹长度: 均值={trajectory_div['length_mean']:.1f}, 标准差={trajectory_div['length_std']:.1f}, CV={trajectory_div['length_cv']:.4f}",
+        f"  平均归一化编辑距离: {trajectory_div['avg_normalized_edit_distance']:.4f}",
+        f"  Top 10 bigrams: {trajectory_div.get('top_bigrams', {})}",
+        "",
+        "【4. 域名多样性】",
         f"  唯一域名数: {domain_div['n_unique_domains']}",
         f"  总样本数: {domain_div['n_total_samples']}",
         f"  唯一域名比例: {domain_div['unique_domain_ratio']:.4f}",
@@ -852,12 +1002,12 @@ def _save_summary(results: Dict[str, Any], output_file: str):
         f"  Gini 系数: {domain_div['domain_gini']:.4f}",
         f"  Top 10 域名: {domain_div['top_domains']}",
         "",
-        "【4. 任务语义多样性】 Sentence Embedding",
+        "【5. 任务语义多样性】 Sentence Embedding",
         f"  语义多样性: {task_div['semantic_diversity']:.4f}",
         f"  平均余弦相似度: {task_div['avg_pairwise_similarity']:.4f}",
         f"  指令数: {task_div['n_instructions']}",
         "",
-        "【5. 表达模式多样性】 Self-BLEU",
+        "【6. 表达模式多样性】 Self-BLEU",
         f"  Self-BLEU: {expression_div['self_bleu']:.4f}",
         f"  表达多样性 (1 - Self-BLEU): {expression_div['expression_diversity']:.4f}",
         f"  指令数: {expression_div['n_instructions']}",

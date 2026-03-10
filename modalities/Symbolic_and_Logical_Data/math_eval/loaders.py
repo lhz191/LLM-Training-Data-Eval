@@ -282,6 +282,75 @@ class LILALoader(BaseLoader):
                 )
 
 
+# === 通用加载器 ===
+
+class GeneralLoader(BaseLoader):
+    """
+    通用加载器：直接读取符合 MathSample 合同的 JSON/JSONL 文件
+
+    期望每条记录包含 MathSample dataclass 的字段：
+      必需: question (str), solution (str | List[str])
+      可选: ground_truth, source_dataset, question_type, sample_id, metadata
+
+    支持格式:
+      - .json  → 顶层数组 [record, ...]
+      - .jsonl → 每行一个 JSON 对象
+    """
+
+    def __init__(self, data_path: str):
+        super().__init__(data_path)
+        self.data: list = []
+
+    def load(self) -> List[MathSample]:
+        self._read_file()
+        samples = []
+        for idx, record in enumerate(self.data):
+            s = self._parse_record(record, idx)
+            if s is not None:
+                samples.append(s)
+        return samples
+
+    def iterate(self) -> Iterator[MathSample]:
+        self._read_file()
+        for idx, record in enumerate(self.data):
+            s = self._parse_record(record, idx)
+            if s is not None:
+                yield s
+
+    def _read_file(self):
+        if self.data:
+            return
+        suffix = self.data_path.suffix.lower()
+        with open(self.data_path, 'r', encoding='utf-8') as f:
+            if suffix == '.jsonl':
+                self.data = [json.loads(line) for line in f if line.strip()]
+            else:
+                self.data = json.load(f)
+                if not isinstance(self.data, list):
+                    self.data = [self.data]
+
+    def _parse_record(self, record: dict, idx: int):
+        try:
+            return MathSample(
+                question=record.get('question', ''),
+                solution=record.get('solution', ''),
+                ground_truth=record.get('ground_truth'),
+                source_dataset=record.get('source_dataset'),
+                question_type=record.get('question_type'),
+                sample_id=record.get('sample_id', f"general_{idx}"),
+                metadata=record.get('metadata', {}),
+            )
+        except Exception as e:
+            print(f"  Warning: failed to parse record {idx}: {e}")
+            return None
+
+
+def load_general(path: str) -> List[MathSample]:
+    """便捷函数：通用加载器，读取符合 MathSample 合同的 JSON/JSONL"""
+    loader = GeneralLoader(path)
+    return loader.load()
+
+
 # === 工厂函数 ===
 
 def load_dataset(name: str, data_path: str, **kwargs) -> List[MathSample]:
@@ -307,6 +376,7 @@ def load_dataset(name: str, data_path: str, **kwargs) -> List[MathSample]:
         'openmathinstruct': OpenMathInstructLoader,
         'gsm8k_aug': GSM8KAugLoader,
         'lila': LILALoader,
+        'general': GeneralLoader,
     }
     
     name_lower = name.lower().replace('-', '_').replace(' ', '_')

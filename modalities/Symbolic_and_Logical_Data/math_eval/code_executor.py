@@ -248,6 +248,9 @@ def _timeout_handler(signum, frame):
 # 工厂函数和注册表
 # =============================================================================
 
+# 格式检查器注册表
+FORMAT_CHECKERS = {}
+
 # 答案提取器注册表
 ANSWER_EXTRACTORS = {}
 
@@ -325,6 +328,33 @@ def get_executor(executor_type: str = 'openmath') -> CodeExecutor:
         raise ValueError(f"Unknown executor: {executor_type}. Available: {available}")
     
     return EXECUTORS[type_lower]()
+
+
+def get_format_checker(dataset_name: str, **kwargs) -> FormatChecker:
+    """
+    获取格式检查器
+    
+    Args:
+        dataset_name: 数据集名称，如 'general', 'lila', 'openmath'
+    
+    Returns:
+        对应的 FormatChecker 实例
+    """
+    name_lower = dataset_name.lower().replace(' ', '').replace('_', '').replace('-', '')
+    if name_lower not in FORMAT_CHECKERS:
+        available = list(FORMAT_CHECKERS.keys())
+        raise ValueError(f"Unknown format checker: {dataset_name}. Available: {available}")
+    return FORMAT_CHECKERS[name_lower](**kwargs)
+
+
+def register_format_checker(name: str, checker_class: type):
+    """注册自定义格式检查器"""
+    FORMAT_CHECKERS[name.lower()] = checker_class
+
+
+def list_format_checkers() -> list:
+    """返回已注册的格式检查器列表"""
+    return list(FORMAT_CHECKERS.keys())
 
 
 def register_answer_extractor(name: str, extractor_class: type):

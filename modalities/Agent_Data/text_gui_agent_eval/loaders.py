@@ -1325,8 +1325,167 @@ class WebLINXLoader(BaseLoader):
 
 
 # =============================================================================
+# General Loader
+# =============================================================================
+
+class GeneralLoader(BaseLoader):
+    """
+    通用数据集加载器
+    
+    直接读取符合 data_types.py 合同 (Record / Action) 的 JSON/JSONL 文件，
+    无需任何数据集特定的转换逻辑。
+    
+    适用场景：
+    - 用户按照 data_types.py 合同自行构建的数据集
+    - 任何已转换为 Record/Action 格式的数据
+    
+    支持的 JSON 格式：
+    {
+        "actions": [
+            {
+                "action_idx": 0,
+                "action_type": "click",
+                "action_value": "",
+                "action_repr": "[button] Search -> CLICK",
+                "cleaned_html": "<html>...</html>",
+                "raw_html": null,
+                "screenshot": null,
+                "target_element": {"tag": "button", ...},
+                "candidates": [...],
+                "metadata": {}
+            },
+            ...
+        ],
+        "sample_id": "sample_0",
+        "instruction": "Search for flights",
+        "website": "google.com",
+        "metadata": {}
+    }
+    
+    支持文件格式：
+    - .json: JSON 数组，每个元素是一个 Record
+    - .jsonl: 每行一个 JSON Record
+    """
+    
+    def __init__(self, data_path: str):
+        super().__init__(data_path)
+        self.data: List[Dict] = []
+    
+    def load(self) -> List[Dict]:
+        """加载原始 JSON/JSONL 数据"""
+        print(f"Loading dataset (general): {self.data_path}")
+        
+        self.data = []
+        
+        if self.data_path.endswith('.jsonl'):
+            with open(self.data_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        self.data.append(json.loads(line))
+        else:
+            with open(self.data_path, 'r', encoding='utf-8') as f:
+                content = json.load(f)
+            if isinstance(content, list):
+                self.data = content
+            elif isinstance(content, dict):
+                self.data = [content]
+            else:
+                raise ValueError(f"Unexpected JSON root type: {type(content)}")
+        
+        print(f"  Loaded {len(self.data)} records")
+        return self.data
+    
+    def parse_all(self, show_progress: bool = True) -> List[Record]:
+        if not self.data:
+            self.load()
+        
+        records = []
+        iterator = tqdm(self.data, desc="Parsing (general)") if show_progress else self.data
+        
+        for idx, raw_record in enumerate(iterator):
+            record = self.parse_record(raw_record, idx)
+            if record:
+                records.append(record)
+        
+        print(f"  Parsed {len(records)} records")
+        return records
+    
+    def iterate(self, show_progress: bool = True) -> Iterator[Record]:
+        if not self.data:
+            self.load()
+        
+        iterator = tqdm(self.data, desc="Parsing (general)") if show_progress else self.data
+        
+        for idx, raw_record in enumerate(iterator):
+            record = self.parse_record(raw_record, idx)
+            if record:
+                yield record
+    
+    def parse_record(self, raw_record: Dict, idx: int = 0) -> Optional[Record]:
+        """
+        解析单条记录为 Record
+        
+        直接映射 JSON 字段到 dataclass，无转换逻辑。
+        """
+        try:
+            raw_actions = raw_record.get('actions', [])
+            if not raw_actions:
+                return None
+            
+            actions = []
+            for i, raw_action in enumerate(raw_actions):
+                action = self._parse_action(raw_action, i)
+                if action:
+                    actions.append(action)
+            
+            if not actions:
+                return None
+            
+            record = Record(
+                actions=actions,
+                sample_id=raw_record.get('sample_id', f"general_{idx}"),
+                instruction=raw_record.get('instruction'),
+                website=raw_record.get('website'),
+                metadata=raw_record.get('metadata', {}),
+            )
+            
+            return record
+            
+        except Exception as e:
+            print(f"  Warning: failed to parse record {idx}: {e}")
+            return None
+    
+    def _parse_action(self, raw_action: Dict, idx: int) -> Optional[Action]:
+        """直接映射 JSON 字段到 Action dataclass"""
+        try:
+            action = Action(
+                action_idx=raw_action.get('action_idx', idx),
+                action_type=raw_action.get('action_type', ''),
+                action_value=raw_action.get('action_value', ''),
+                action_repr=raw_action.get('action_repr', ''),
+                cleaned_html=raw_action.get('cleaned_html', ''),
+                raw_html=raw_action.get('raw_html'),
+                screenshot=raw_action.get('screenshot'),
+                target_element=raw_action.get('target_element'),
+                candidates=raw_action.get('candidates', []),
+                metadata=raw_action.get('metadata', {}),
+            )
+            return action
+        except Exception as e:
+            print(f"  Warning: failed to parse action {idx}: {e}")
+            return None
+
+
+# =============================================================================
 # 便捷函数
 # =============================================================================
+
+def load_general(path: str, show_progress: bool = True) -> List[Record]:
+    """便捷函数：通用加载器，读取符合 Record/Action 合同的 JSON/JSONL"""
+    loader = GeneralLoader(path)
+    return loader.parse_all(show_progress)
+
 
 def load_mind2web(path: str, show_progress: bool = True) -> List[Record]:
     """便捷函数：加载 Mind2Web 数据集"""

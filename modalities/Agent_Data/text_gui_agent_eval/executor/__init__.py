@@ -7,16 +7,18 @@
 - executor.weblinx: WebLINX 数据集执行器
 - executor.mind2web: Mind2Web 数据集执行器
 - executor.webshop: WebShop 数据集执行器
+- executor.general: 通用执行器（基于 data_types.py 合同，无数据集特有逻辑）
 
 使用方式：
     # 方式1：直接导入类
     from executor.weblinx import WebLINXStaticChecker
     from executor.mind2web import Mind2WebStaticChecker
     from executor.webshop import WebShopStaticChecker
+    from executor.general import GeneralFormatChecker, GeneralStaticChecker
     
     # 方式2：通过全局注册表
-    from text_gui_executor import get_static_checker
-    checker = get_static_checker('weblinx')
+    from text_gui_executor import get_static_checker, get_format_checker
+    checker = get_static_checker('general')
 """
 
 import sys
@@ -84,6 +86,17 @@ register_html_locator('webshop', WebShopLocator)
 
 
 # =============================================================================
+# 导入并注册 General 检查器
+# =============================================================================
+
+from .general import (
+    GeneralFormatChecker,
+)
+
+register_format_checker('general', GeneralFormatChecker)
+
+
+# =============================================================================
 # 导出
 # =============================================================================
 
@@ -101,4 +114,6 @@ __all__ = [
     'WebShopStaticChecker',
     'WebShopFormatChecker',
     'WebShopLocator',
+    # General
+    'GeneralFormatChecker',
 ]

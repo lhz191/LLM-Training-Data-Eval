@@ -4,19 +4,25 @@
 API Agent 执行器包
 
 按数据集组织的执行器模块：
-- executor.toolbench: ToolBench 数据集执行器
-- executor.xlam: xLAM 数据集执行器
+- executor.general:     通用检查器（基于 data_types.py 合同，不依赖特定数据集）
+- executor.toolbench:   ToolBench 数据集执行器
+- executor.xlam:        xLAM 数据集执行器
 - executor.arcee_agent: Arcee Agent Data 执行器
 
 使用方式：
-    # 方式1：直接导入类
+    # 方式1：通用检查器（适用于任何符合 data_types.py 合同的数据）
+    from executor.general import GeneralFormatChecker, GeneralExecutabilityChecker
+    checker = GeneralFormatChecker()
+    errors, warnings = checker.check(sample)
+
+    # 方式2：直接导入特定数据集检查器
     from executor.toolbench import ToolBenchFormatChecker
     from executor.xlam import XLAMFormatChecker
-    from executor.arcee_agent import ArceeAgentFormatChecker
-    
-    # 方式2：通过全局注册表
+
+    # 方式3：通过全局注册表
     from api_executor import get_format_checker
-    checker = get_format_checker('toolbench')
+    checker = get_format_checker('general')   # 通用
+    checker = get_format_checker('toolbench') # ToolBench 特有
 """
 
 import os
@@ -32,6 +38,19 @@ from api_executor import (
     register_executability_checker,
     register_dynamic_checker,
 )
+
+
+# =============================================================================
+# 导入并注册 General (通用) 检查器
+# =============================================================================
+
+from .general import (
+    GeneralFormatChecker,
+    GeneralExecutabilityChecker,
+)
+
+register_format_checker('general', GeneralFormatChecker)
+register_executability_checker('general', GeneralExecutabilityChecker)
 
 
 # =============================================================================
@@ -84,6 +103,9 @@ register_executability_checker('arcee-agent-data', ArceeAgentExecutabilityChecke
 # =============================================================================
 
 __all__ = [
+    # General (通用)
+    'GeneralFormatChecker',
+    'GeneralExecutabilityChecker',
     # ToolBench
     'ToolBenchFormatChecker',
     'ToolBenchExecutabilityChecker',

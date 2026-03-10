@@ -1585,8 +1585,191 @@ class ArceeAgentDataLoader(BaseLoader):
 
 
 # =============================================================================
+# General Loader (通用加载器)
+# =============================================================================
+
+class GeneralLoader(BaseLoader):
+    """
+    通用数据加载器：直接读取符合 data_types.py 合同的 JSON/JSONL 文件
+    
+    当用户按照 APIAgentSample 的格式生成数据时，无需任何转换逻辑，
+    直接用此加载器即可。
+    
+    期望的 JSONL 格式（每行一条）:
+    {
+        "query": "用户查询",
+        "tools": [
+            {
+                "name": "tool_name",
+                "description": "工具描述",
+                "parameters": [
+                    {
+                        "name": "param_name",
+                        "type": "str",
+                        "description": "参数描述",
+                        "default": null,
+                        "required": true,
+                        "optional": false
+                    }
+                ]
+            }
+        ],
+        "api_calls": [
+            {
+                "name": "tool_name",
+                "arguments": {"param_name": "value"},
+                "response": null
+            }
+        ],
+        "final_answer": "可选的最终答案",
+        "sample_id": "可选的样本 ID",
+        "source_dataset": "可选的来源数据集名称"
+    }
+    
+    也支持 JSON 数组格式 (整个文件是一个 JSON 数组)。
+    """
+    
+    def __init__(self, dataset_path: str):
+        self.dataset_path = dataset_path
+        self.data: List[Dict] = []
+    
+    def load(self) -> List[Dict]:
+        """加载原始 JSON/JSONL 数据"""
+        print(f"Loading dataset (general): {self.dataset_path}")
+        self.data = []
+        
+        with open(self.dataset_path, 'r', encoding='utf-8') as f:
+            first_char = f.read(1)
+            f.seek(0)
+            
+            if first_char == '[':
+                self.data = json.load(f)
+            else:
+                for line in f:
+                    if line.strip():
+                        try:
+                            self.data.append(json.loads(line))
+                        except json.JSONDecodeError as e:
+                            print(f"  Skipping invalid JSON line: {e}")
+                            continue
+        
+        print(f"  Loaded {len(self.data):,} records")
+        return self.data
+    
+    def parse_all(self, show_progress: bool = True) -> List[APIAgentSample]:
+        """解析所有记录为 APIAgentSample"""
+        if not self.data:
+            self.load()
+        
+        samples = []
+        iterator = tqdm(self.data, desc="Parsing (general)") if show_progress else self.data
+        
+        for idx, record in enumerate(iterator):
+            sample = self.parse_record(record, idx)
+            if sample:
+                samples.append(sample)
+        
+        print(f"  Parsed {len(samples):,} samples")
+        return samples
+    
+    def iterate(self, show_progress: bool = True) -> Iterator[APIAgentSample]:
+        """迭代返回 APIAgentSample"""
+        if not self.data:
+            self.load()
+        
+        iterator = tqdm(self.data, desc="Parsing (general)") if show_progress else self.data
+        
+        for idx, record in enumerate(iterator):
+            sample = self.parse_record(record, idx)
+            if sample:
+                yield sample
+    
+    def parse_record(self, record: Dict, idx: int = 0) -> Optional[APIAgentSample]:
+        """
+        将一条 JSON 记录转换为 APIAgentSample
+        
+        严格按照 data_types.py 中的字段定义进行映射：
+        - Parameter: name, type, description, default, required, optional, metadata
+        - ToolDefinition: name, description, parameters
+        - APICall: name, arguments, response, metadata
+        - APIAgentSample: query, tools, api_calls, final_answer, sample_id, source_dataset, metadata
+        """
+        try:
+            query = record.get('query', '')
+            if not query:
+                return None
+            
+            # 解析 tools → List[ToolDefinition]
+            tools = []
+            for t in record.get('tools', []):
+                if not isinstance(t, dict):
+                    continue
+                name = t.get('name', '')
+                if not name:
+                    continue
+                
+                parameters = []
+                for p in t.get('parameters', []):
+                    if not isinstance(p, dict):
+                        continue
+                    p_name = p.get('name', '')
+                    if not p_name:
+                        continue
+                    is_required = p.get('required', True)
+                    parameters.append(Parameter(
+                        name=p_name,
+                        type=p.get('type', 'string'),
+                        description=p.get('description', ''),
+                        default=p.get('default'),
+                        required=is_required,
+                        optional=p.get('optional', not is_required),
+                        metadata=p.get('metadata', {}),
+                    ))
+                
+                tools.append(ToolDefinition(
+                    name=name,
+                    description=t.get('description', ''),
+                    parameters=parameters,
+                ))
+            
+            # 解析 api_calls → List[APICall]
+            api_calls = []
+            for c in record.get('api_calls', []):
+                if not isinstance(c, dict):
+                    continue
+                c_name = c.get('name', '')
+                if not c_name:
+                    continue
+                api_calls.append(APICall(
+                    name=c_name,
+                    arguments=c.get('arguments', {}),
+                    response=c.get('response'),
+                    metadata=c.get('metadata', {}),
+                ))
+            
+            return APIAgentSample(
+                query=query,
+                tools=tools,
+                api_calls=api_calls,
+                final_answer=record.get('final_answer'),
+                sample_id=record.get('sample_id', f"general_{idx}"),
+                source_dataset=record.get('source_dataset', 'unknown'),
+                metadata=record.get('metadata', {}),
+            )
+        except Exception as e:
+            print(f"  Failed to parse record {idx}: {e}")
+            return None
+
+
+# =============================================================================
 # 便捷函数
 # =============================================================================
+
+def load_general(path: str, show_progress: bool = True) -> List[APIAgentSample]:
+    """便捷函数：加载符合 data_types.py 合同的通用格式数据"""
+    loader = GeneralLoader(path)
+    return loader.parse_all(show_progress)
+
 
 def load_toolbench(path: str, show_progress: bool = True) -> List[APIAgentSample]:
     """便捷函数：加载 ToolBench 数据集"""

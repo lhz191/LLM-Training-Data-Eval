@@ -6,15 +6,18 @@ Math 执行器包
 按数据集组织的执行器模块：
 - executor.lila: LILA 数据集执行器
 - executor.openmath: OpenMath 数据集执行器
+- executor.general: 基于 data_types.py 合同的通用检查器
 
 使用方式：
     # 方式1：直接导入类
     from executor.lila import LILACodeExecutor
     from executor.openmath import OpenMathExecutor
+    from executor.general import GeneralFormatChecker
     
     # 方式2：通过全局注册表
-    from code_executor import get_executor
+    from code_executor import get_executor, get_format_checker
     executor = get_executor('lila')
+    checker = get_format_checker('general')
 """
 
 import os
@@ -29,6 +32,7 @@ from code_executor import (
     register_answer_extractor,
     register_code_extractor,
     register_executor,
+    register_format_checker,
 )
 
 
@@ -79,10 +83,26 @@ register_executor('openmathinstruct1fast', OpenMathExecutorFast)
 
 
 # =============================================================================
+# 导入并注册 General（基于 data_types.py 合同的通用检查器）
+# =============================================================================
+
+from .general import GeneralFormatChecker
+
+register_format_checker('general', GeneralFormatChecker)
+
+# 同时注册 dataset-specific 的格式检查器
+register_format_checker('lila', LILAFormatChecker)
+register_format_checker('openmath', OpenMathFormatChecker)
+register_format_checker('openmathinstruct1', OpenMathFormatChecker)
+
+
+# =============================================================================
 # 导出
 # =============================================================================
 
 __all__ = [
+    # General
+    'GeneralFormatChecker',
     # LILA
     'LILACodeExtractor',
     'LILACodeExecutor',

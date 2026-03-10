@@ -9,7 +9,7 @@
     format_check.py         ← 继承单轮，展平后调用
     executability.py        ← 继承单轮，展平后调用
     task_complexity.py      ← 继承单轮，展平后调用
-    trustworthy.py          ← 继承单轮，展平后调用
+    trustworthy.py          ← session-level 安全评估（整条多轮轨迹）
     dynamic_executability.py← 继承单轮，展平后调用
     mt_specific/            ← 纯多轮专有指标（不继承单轮）
       cross_turn_consistency.py

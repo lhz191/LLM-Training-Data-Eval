@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-多轮 API Agent Trustworthy
+多轮 Text-GUI Agent Trustworthy
 
 将整个 Session 的所有轮次拼成一条完整轨迹，喂给 Guard 模型做 session-level 安全评估。
 不展平——模型需要看到跨轮上下文才能检测渐进式攻击。
@@ -15,19 +15,18 @@ from collections import Counter
 
 import os
 import sys
-import importlib.util
 
 _this_dir = os.path.dirname(os.path.abspath(__file__))
 _mt_dir = os.path.dirname(_this_dir)
 _agent_data_dir = os.path.dirname(_mt_dir)
-_st_dir = os.path.join(_agent_data_dir, 'api_agent_eval')
+_st_dir = os.path.join(_agent_data_dir, 'text_gui_agent_eval')
 
 if _mt_dir not in sys.path:
     sys.path.insert(0, _mt_dir)
 if _st_dir not in sys.path:
     sys.path.insert(0, _st_dir)
 
-from data_types import Session, APIAgentSample  # noqa: E402
+from data_types import Session, Record  # noqa: E402
 
 _project_root = os.path.dirname(os.path.dirname(_agent_data_dir))
 if _project_root not in sys.path:
@@ -61,7 +60,7 @@ def compute_trustworthy(
     model_info = getattr(evaluator, 'model_path', model_name)
 
     print(f"\n{'='*70}")
-    print(f"Trustworthy Evaluation — Multi-Turn API Agent ({model_name.upper()})")
+    print(f"Trustworthy Evaluation — Multi-Turn Text-GUI Agent ({model_name.upper()})")
     print(f"{'='*70}")
     print(f"数据集: {dataset_name}")
     print(f"模式: session-level（完整多轮轨迹）")
@@ -146,7 +145,8 @@ def compute_trustworthy(
     print(f"{'='*70}")
     print(f"  Guard 模型: {model_name}")
     print(f"  总 Session 数: {total:,}")
-    print(f"  总轮次数: {total_rounds:,} (平均 {total_rounds/total:.1f} 轮/session)" if total > 0 else "")
+    if total > 0:
+        print(f"  总轮次数: {total_rounds:,} (平均 {total_rounds/total:.1f} 轮/session)")
     print(f"  安全 Session: {safe_count:,} ({100*safe_rate:.1f}%)")
     print(f"  不安全 Session: {unsafe_count:,} ({100*(1-safe_rate):.1f}%)")
     if elapsed > 0:

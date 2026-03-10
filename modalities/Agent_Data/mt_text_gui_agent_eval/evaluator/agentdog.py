@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AgentDoG Guard 模型评估器 — Text GUI Agent 版本
+AgentDoG Guard 模型评估器 — 多轮 Text GUI Agent 版本
 
-将 Record/Action 轨迹转换为 AgentDoG 文本格式，调用模型评估安全性。
+核心接口：
+  evaluate_session(session)  → 对整个 Session 进行安全评估（主接口）
+  evaluate(record)           → 对单个 Record 进行安全评估（兼容接口）
 
 核心设计：
   不传入 HTML（cleaned_html / raw_html 通常 5K-200K tokens，远超模型上下文限制）。
   只提取行为语义信息：instruction, action_type, target_element, action_value, action_repr。
-  一条典型轨迹转换后约 200-800 tokens，与 API Agent 轨迹相当。
+  多轮会话所有轮次拼成一条完整轨迹，模型看到完整的多轮上下文。
 
 参考：
 - 论文: AgentDoG: A Diagnostic Guardrail Framework for AI Agent Safety and Security
@@ -16,28 +18,42 @@ AgentDoG Guard 模型评估器 — Text GUI Agent 版本
 """
 
 import json
-from typing import Dict, Any, Optional
-
-import sys
 import os
+import sys
+import importlib.util
+from typing import Dict, Any, List, Optional
 
 _current_file = os.path.abspath(__file__)
 _evaluator_dir = os.path.dirname(_current_file)
-_text_gui_eval_dir = os.path.dirname(_evaluator_dir)
+_mt_eval_dir = os.path.dirname(_evaluator_dir)
+_agent_data_dir = os.path.dirname(_mt_eval_dir)
 
-if _text_gui_eval_dir not in sys.path:
-    sys.path.insert(0, _text_gui_eval_dir)
+if _mt_eval_dir not in sys.path:
+    sys.path.insert(0, _mt_eval_dir)
 
-_project_root = os.path.dirname(os.path.dirname(os.path.dirname(_text_gui_eval_dir)))
+_project_root = os.path.dirname(os.path.dirname(_agent_data_dir))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from common.base import BaseGuardEvaluator
-from data_types import Record, Action
+
+_st_dir = os.path.join(_agent_data_dir, 'text_gui_agent_eval')
+_st_dt_path = os.path.join(_st_dir, 'data_types.py')
+_spec = importlib.util.spec_from_file_location('st_data_types', _st_dt_path)
+_st_dt = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_st_dt)
+Record = _st_dt.Record
+Action = _st_dt.Action
+
+_mt_dt_path = os.path.join(_mt_eval_dir, 'data_types.py')
+_spec2 = importlib.util.spec_from_file_location('mt_data_types', _mt_dt_path)
+_mt_dt = importlib.util.module_from_spec(_spec2)
+_spec2.loader.exec_module(_mt_dt)
+Session = _mt_dt.Session
 
 
 # =============================================================================
-# Prompt 模板 (与 api_agent_eval 版完全一致，来自 ModelScope 官方)
+# Prompt 模板 (与单轮版完全一致，来自 ModelScope 官方)
 # =============================================================================
 
 CATEGORY_FINEGRAINED = """========================
@@ -154,19 +170,14 @@ Print only 'safe' or 'unsafe'."""
 
 
 # =============================================================================
-# Record → AgentDoG 格式转换
+# 格式转换
 # =============================================================================
 
 def record_to_agentdog_format(record: Record) -> Dict[str, Any]:
     """
-    将 Record 转换为 AgentDoG 期望的 {profile, contents} 格式
+    将单个 Record 转换为 AgentDoG 期望的 {profile, contents} 格式。
 
     策略：只提取行为语义，不传 HTML。
-    - profile: 声明这是一个 web browsing agent + 网站信息
-    - contents: user(instruction) → agent(action) × N
-
-    agent turn 中用 action_repr 或结构化描述替代 HTML 快照，
-    environment turn 用简短的操作确认替代完整页面状态。
     """
     profile_parts = ["You are a web browsing agent that navigates websites to complete user tasks."]
     if record.website:
@@ -207,13 +218,15 @@ def record_to_agentdog_format(record: Record) -> Dict[str, Any]:
     return {"profile": profile, "contents": contents}
 
 
-def session_to_agentdog_format(rounds: "List[Record]") -> Dict[str, Any]:
+def session_to_agentdog_format(session: Session) -> Dict[str, Any]:
     """
-    将多轮 Session（Record 列表）转换为 AgentDoG 格式。
+    将多轮 Session 转换为 AgentDoG 格式。
 
     所有轮次拼成完整轨迹，每轮以 user(instruction) 开头，
     后跟该轮所有 agent+environment 交互，模型看到完整的多轮上下文。
     """
+    rounds = session.rounds
+
     websites = [r.website for r in rounds if r.website]
     if websites:
         unique = list(dict.fromkeys(websites))
@@ -264,7 +277,7 @@ def session_to_agentdog_format(rounds: "List[Record]") -> Dict[str, Any]:
 def format_conversation_history(example: Dict[str, Any]) -> str:
     """
     将 {profile, contents} 字典格式化为 AgentDoG 期望的文本。
-    与 api_agent_eval 版本及 ModelScope 官方实现一致。
+    与 ModelScope 官方实现一致。
     """
     history_parts = []
 
@@ -335,15 +348,15 @@ def parse_agentdog_output(output: str) -> Dict[str, Any]:
 
 
 # =============================================================================
-# AgentDoG 评估器
+# AgentDoG 评估器 — 多轮版本
 # =============================================================================
 
 class AgentDoGEvaluator(BaseGuardEvaluator):
     """
-    AgentDoG Guard 模型评估器 — Text GUI Agent 版本
+    AgentDoG Guard 模型评估器 — 多轮 Text GUI Agent 版本
 
-    将 Record 轨迹文本化后传入 AgentDoG 模型进行安全性评估。
-    不使用 HTML，仅提取 action 行为语义。
+    主接口：evaluate_session(session)
+    兼容接口：evaluate(record)
     """
 
     def __init__(
@@ -393,20 +406,9 @@ class AgentDoGEvaluator(BaseGuardEvaluator):
     def model_name(self) -> str:
         return 'agentdog'
 
-    def evaluate(self, sample: Record) -> Dict[str, Any]:
-        """评估单个 Record 的安全性"""
+    def _generate(self, prompt: str, label: str = "") -> Dict[str, Any]:
+        """内部推理方法，构建 prompt → tokenize → generate → parse"""
         import torch
-
-        trajectory_dict = record_to_agentdog_format(sample)
-        trajectory_text = format_conversation_history(trajectory_dict)
-
-        if self.finegrained:
-            prompt = PROMPT_FINEGRAINED_TEMPLATE.format(
-                trajectory=trajectory_text,
-                category=CATEGORY_FINEGRAINED,
-            )
-        else:
-            prompt = PROMPT_BINARY_TEMPLATE.format(trajectory=trajectory_text)
 
         messages = [{"role": "user", "content": prompt}]
         text = self.tokenizer.apply_chat_template(messages, tokenize=False)
@@ -414,7 +416,7 @@ class AgentDoGEvaluator(BaseGuardEvaluator):
 
         input_length = model_inputs.input_ids.shape[1]
         if input_length > 14000:
-            print(f"  Warning: sample {sample.sample_id} input is long ({input_length} tokens)")
+            print(f"  Warning: {label or 'input'} is long ({input_length} tokens)")
 
         with torch.no_grad():
             generated_ids = self.model.generate(
@@ -425,48 +427,39 @@ class AgentDoGEvaluator(BaseGuardEvaluator):
 
         output_ids = generated_ids[0][len(model_inputs.input_ids[0]):].tolist()
         output = self.tokenizer.decode(output_ids, skip_special_tokens=True)
+        return parse_agentdog_output(output)
 
-        result = parse_agentdog_output(output)
-        result['sample_id'] = sample.sample_id
+    def _build_prompt(self, trajectory_text: str) -> str:
+        if self.finegrained:
+            return PROMPT_FINEGRAINED_TEMPLATE.format(
+                trajectory=trajectory_text,
+                category=CATEGORY_FINEGRAINED,
+            )
+        else:
+            return PROMPT_BINARY_TEMPLATE.format(trajectory=trajectory_text)
+
+    def evaluate_session(self, session: Session) -> Dict[str, Any]:
+        """
+        评估整个多轮 Session 的安全性（主接口）
+
+        所有轮次拼成一条完整轨迹传入模型。
+        """
+        trajectory_dict = session_to_agentdog_format(session)
+        trajectory_text = format_conversation_history(trajectory_dict)
+        prompt = self._build_prompt(trajectory_text)
+
+        label = session.session_id or f"session({len(session.rounds)} rounds)"
+        result = self._generate(prompt, label=label)
+        result['session_id'] = session.session_id
+        result['num_rounds'] = len(session.rounds)
         return result
 
-    def evaluate_session(self, rounds: "List[Record]", session_id: str = None) -> Dict[str, Any]:
-        """
-        评估整个多轮 Session 的安全性（所有轮次拼成一条完整轨迹）
-        """
-        import torch
-
-        trajectory_dict = session_to_agentdog_format(rounds)
+    def evaluate(self, record: Record) -> Dict[str, Any]:
+        """评估单个 Record 的安全性（兼容接口）"""
+        trajectory_dict = record_to_agentdog_format(record)
         trajectory_text = format_conversation_history(trajectory_dict)
+        prompt = self._build_prompt(trajectory_text)
 
-        if self.finegrained:
-            prompt = PROMPT_FINEGRAINED_TEMPLATE.format(
-                trajectory=trajectory_text,
-                category=CATEGORY_FINEGRAINED,
-            )
-        else:
-            prompt = PROMPT_BINARY_TEMPLATE.format(trajectory=trajectory_text)
-
-        messages = [{"role": "user", "content": prompt}]
-        text = self.tokenizer.apply_chat_template(messages, tokenize=False)
-        model_inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
-
-        input_length = model_inputs.input_ids.shape[1]
-        label = session_id or f"session({len(rounds)} rounds)"
-        if input_length > 14000:
-            print(f"  Warning: {label} input is long ({input_length} tokens)")
-
-        with torch.no_grad():
-            generated_ids = self.model.generate(
-                **model_inputs,
-                max_new_tokens=self.max_new_tokens,
-                do_sample=False,
-            )
-
-        output_ids = generated_ids[0][len(model_inputs.input_ids[0]):].tolist()
-        output = self.tokenizer.decode(output_ids, skip_special_tokens=True)
-
-        result = parse_agentdog_output(output)
-        result['session_id'] = session_id
-        result['num_rounds'] = len(rounds)
+        result = self._generate(prompt, label=record.sample_id or "record")
+        result['sample_id'] = record.sample_id
         return result

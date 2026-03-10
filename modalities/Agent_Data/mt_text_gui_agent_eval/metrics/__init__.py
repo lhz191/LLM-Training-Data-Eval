@@ -11,6 +11,7 @@
     task_complexity.py        ← 继承单轮，展平后调用
     trajectory_validity.py    ← 继承单轮，展平后调用
     html_retention.py         ← 继承单轮，展平后调用
+    trustworthy.py            ← session-level 安全评估（整条多轮轨迹）
     dynamic_executability.py  ← 继承单轮，展平后调用
     mt_specific/              ← 纯多轮专有指标（不继承单轮）
       cross_turn_consistency.py
@@ -19,6 +20,7 @@
 """
 
 from .diversity import compute_diversity_multiturn
+from .trustworthy import compute_trustworthy
 from .format_check import compute_format_check
 from .static_executability import compute_static_executability
 from .task_complexity import compute_task_complexity
@@ -36,6 +38,7 @@ from .mt_specific import (
 __all__ = [
     # 继承单轮（展平后调用）
     'compute_diversity_multiturn',
+    'compute_trustworthy',
     'compute_format_check',
     'compute_static_executability',
     'compute_task_complexity',

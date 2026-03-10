@@ -300,6 +300,58 @@ def sample_to_agentdog_format(sample: APIAgentSample) -> Dict[str, Any]:
     }
 
 
+def session_to_agentdog_format(rounds: "List[APIAgentSample]") -> Dict[str, Any]:
+    """
+    将多轮 Session（APIAgentSample 列表）转换为 AgentDoG 格式。
+
+    所有轮次的工具定义合并到 profile，每轮的 query + api_calls 作为
+    contents 中的一个 round，模型看到完整的多轮上下文。
+    """
+    all_tools = {}
+    for sample in rounds:
+        for tool in sample.tools:
+            if tool.name not in all_tools:
+                all_tools[tool.name] = {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {p.name: {"type": p.type, "description": p.description} for p in tool.parameters}
+                    }
+                }
+
+    profile = f"You are a helpful assistant.\nAvailable tools:{json.dumps(list(all_tools.values()), ensure_ascii=False)}"
+
+    contents = []
+    for sample in rounds:
+        round_turns = []
+
+        round_turns.append({"role": "user", "content": sample.query})
+
+        for call in sample.api_calls:
+            thought = call.metadata.get('thought', '') if call.metadata else ''
+            action_dict = {"name": call.name, "arguments": call.arguments}
+            round_turns.append({
+                "role": "agent",
+                "thought": thought,
+                "action": json.dumps(action_dict, ensure_ascii=False),
+            })
+            if call.response:
+                response_str = call.response if isinstance(call.response, str) else json.dumps(call.response, ensure_ascii=False)
+                round_turns.append({"role": "environment", "content": response_str})
+
+        if sample.final_answer:
+            round_turns.append({
+                "role": "agent",
+                "thought": "",
+                "action": f'Complete{{"response": "{sample.final_answer}"}}',
+            })
+
+        contents.append(round_turns)
+
+    return {"profile": profile, "contents": contents}
+
+
 def parse_agentdog_output(output: str) -> Dict[str, Any]:
     """
     解析 AgentDoG 模型输出
@@ -500,5 +552,46 @@ class AgentDoGEvaluator(BaseGuardEvaluator):
         result = parse_agentdog_output(output)
         result['sample_id'] = sample.sample_id
         
+        return result
+
+    def evaluate_session(self, rounds: "List[APIAgentSample]", session_id: str = None) -> Dict[str, Any]:
+        """
+        评估整个多轮 Session 的安全性（所有轮次拼成一条完整轨迹）
+        """
+        import torch
+
+        trajectory_dict = session_to_agentdog_format(rounds)
+        trajectory_text = format_conversation_history(trajectory_dict)
+
+        if self.finegrained:
+            prompt = PROMPT_FINEGRAINED_TEMPLATE.format(
+                trajectory=trajectory_text,
+                category=CATEGORY_FINEGRAINED,
+            )
+        else:
+            prompt = PROMPT_BINARY_TEMPLATE.format(trajectory=trajectory_text)
+
+        messages = [{"role": "user", "content": prompt}]
+        text = self.tokenizer.apply_chat_template(messages, tokenize=False)
+        model_inputs = self.tokenizer([text], return_tensors="pt").to(self.model.device)
+
+        input_length = model_inputs.input_ids.shape[1]
+        label = session_id or f"session({len(rounds)} rounds)"
+        if input_length > 14000:
+            print(f"  Warning: {label} input is long ({input_length} tokens)")
+
+        with torch.no_grad():
+            generated_ids = self.model.generate(
+                **model_inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,
+            )
+
+        output_ids = generated_ids[0][len(model_inputs.input_ids[0]):].tolist()
+        output = self.tokenizer.decode(output_ids, skip_special_tokens=True)
+
+        result = parse_agentdog_output(output)
+        result['session_id'] = session_id
+        result['num_rounds'] = len(rounds)
         return result
 

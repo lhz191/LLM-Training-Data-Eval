@@ -4,10 +4,12 @@
 Guard Model Evaluator 包
 
 支持的 Guard 模型:
-- AgentDoG: 上海人工智能实验室的 Agent 安全诊断框架 (SOTA)
-- LlamaGuard: Meta 的内容安全模型 (TODO)
-- ShieldAgent: Agent 安全防护模型 (TODO)
-- Qwen3Guard: 阿里的安全模型 (TODO)
+- AgentDoG: 上海 AI Lab 的 Agent 安全诊断框架，细粒度分类 (已实现)
+- ShieldAgent: 浙大/蚂蚁，多阶段 Agent 防护 (TODO)
+- WebGuard: 专门 Web Agent 安全，网页操作场景风险分类 (TODO)
+- LlamaGuard: Meta 通用内容安全模型，可做 baseline (TODO)
+- WildGuard: Allen AI 通用 safety，adversarial prompt 检测 (TODO)
+- Qwen3Guard: 阿里通用安全模型 (TODO)
 
 使用方式：
     # 方式1：直接导入类

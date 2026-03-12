@@ -79,6 +79,24 @@ Single data point        Dataset level             Training level
 | **Multimodal** | Visual quality (IS, VBench), safety, CLIP score | + VQA correctness, captioning (BLEU/CIDEr), retrieval, multimodal SFT quality | Medium — current metrics cover generation tasks; understanding tasks need Layer 2 |
 | **Agent / Reasoning** | Executability, answer correctness, code execution | Same checkers used in both layers | High — verification inherently requires domain-specific execution |
 
+<details>
+<summary><b>Example: Why Graph data needs both layers</b></summary>
+
+Suppose an LLM generates a knowledge graph triple: `(Einstein, born_in, Physics)`
+
+**Layer 1 (Data Audit)** checks structural properties only:
+- Is it a valid graph? (head, relation, tail all present) -> Pass
+- Degree distribution matches reference graphs? -> Pass
+- Not a duplicate of other generated triples? -> Pass
+
+**Layer 2 (Task-Specific, e.g. KG Completion)** checks semantic correctness:
+- Is the fact correct? -> Fail (Einstein was born in Ulm, not "Physics")
+- Type constraint: `born_in` tail should be a location, not a discipline -> Fail
+
+Layer 1 says this data is structurally fine. Layer 2 says it is semantically wrong and will degrade a knowledge graph completion model. This gap is why Graph and Tabular modalities benefit most from two-layer evaluation — structural validity and semantic correctness are fundamentally different concerns.
+
+</details>
+
 > **Why not just use Layer 2?** Layer 1 operates on individual data points immediately after generation, before data is organized into task-specific datasets. It serves as a fast pre-filter with no assumptions about downstream usage. Layer 2 requires knowing the target task and dataset schema, and evaluates at the collection level.
 >
 > **Context.** Recent work (AgoraBench, ACL 2025) shows that intrinsic data features can partially predict downstream training effectiveness (R² = 0.325 via PCA on soft metrics like LLM judge scores). Our framework focuses on **hard verification** — deterministic checks like code execution and answer comparison — which catches errors that soft metrics miss entirely.

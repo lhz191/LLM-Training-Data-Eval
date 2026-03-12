@@ -21,9 +21,9 @@ This framework provides systematic evaluation metrics for LLM training data qual
 - **Symbolic & Logical Data** - Mathematical reasoning, code, formal logic
 - **Agent Data** - Tool-calling, API interaction, web navigation
 - **Vision-Language Data** - Image-text, video-text multimodal data
-- **Text Data** - Pure text corpora *(coming soon)*
-- **Tabular Data** - Structured table data *(coming soon)*
-- **Semi-Structured & Graph Data** - Knowledge graphs, semi-structured data *(coming soon)*
+- **Text Data** - Pure text corpora
+- **Tabular Data** - Structured table data
+- **Semi-Structured & Graph Data** - Knowledge graphs, semi-structured data
 
 ## Two-Layer Evaluation
 

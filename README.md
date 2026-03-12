@@ -25,6 +25,64 @@ This framework provides systematic evaluation metrics for LLM training data qual
 - **Tabular Data** - Structured table data *(coming soon)*
 - **Semi-Structured & Graph Data** - Knowledge graphs, semi-structured data *(coming soon)*
 
+## Two-Layer Evaluation
+
+This framework addresses a critical gap in LLM data pipelines: **there is no standard way to assess data quality between generation and training**. We provide two complementary evaluation layers:
+
+```
+                        LLM generates data
+                              |
+                              v
+                ┌─────────────────────────┐
+                │  Layer 1: Data Audit    │  task-agnostic
+                │  "Can this data be used │  validity, fidelity,
+                │   at all?"              │  diversity, safety
+                └────────────┬────────────┘
+                             |
+                    filter out defective data
+                             |
+                             v
+                ┌─────────────────────────┐
+                │  Layer 2: Task-Specific │  per-task metrics
+                │  "Is this data good for │  pass@k, exec rate,
+                │   task X?"              │  VBench, BLEU, ...
+                └────────────┬────────────┘
+                             |
+                             v
+                      post-training (SFT/DPO/RLHF)
+```
+
+**Layer 1 — Data Quality Audit** evaluates intrinsic properties of each data point independent of downstream usage. It catches deterministic defects: incorrect math solutions, non-executable code, malformed JSON, unsafe content. These checks are cheap, fast, and apply universally.
+
+**Layer 2 — Task-Specific Evaluation** measures data fitness for a particular post-training objective using domain-appropriate metrics and executors. Different datasets require different checkers (e.g., ToolBench needs API parameter validation, LILA needs symbolic execution, COCO needs caption format compliance).
+
+Both layers are organized by data modality and share the same loader/executor infrastructure. For each modality, `metrics/` provides data-level audit functions, while `{domain}_eval/` provides task-specific evaluation pipelines.
+
+### Relationship Between Layers
+
+The two layers are not independent — they share the same evaluation dimensions (validity, fidelity, diversity, safety) but operate at different granularities:
+
+```
+Single data point        Dataset level             Training level
+  (correctness,     (+ diversity, fidelity,    (+ actually train a model,
+   safety, ...)       format compliance, ...)    measure PGR, ...)
+
+|---- Layer 1 ----|---- Layer 2 -----------|     out of scope
+```
+
+**Layer 2 is a superset of Layer 1.** Task-specific evaluation naturally includes data-point quality checks, plus additional dataset-level statistics and format compliance requirements. The degree of overlap between layers varies by modality:
+
+| Modality | Layer 1 (Data Audit) | Layer 2 (Task-Specific) | Overlap |
+|----------|---------------------|------------------------|---------|
+| **Graph / Tabular** | Structural validity, MMD, diversity | Node classification, link prediction, ML efficacy | Low — genuinely different |
+| **Text** | Grammar, toxicity, perplexity, dedup | Instruction difficulty, response quality for SFT, preference data quality | Low to medium |
+| **Multimodal** | Visual quality (IS, VBench), safety, CLIP score | + VQA correctness, captioning (BLEU/CIDEr), retrieval, multimodal SFT quality | Medium — current metrics cover generation tasks; understanding tasks need Layer 2 |
+| **Agent / Reasoning** | Executability, answer correctness, code execution | Same checkers used in both layers | High — verification inherently requires domain-specific execution |
+
+> **Why not just use Layer 2?** Layer 1 operates on individual data points immediately after generation, before data is organized into task-specific datasets. It serves as a fast pre-filter with no assumptions about downstream usage. Layer 2 requires knowing the target task and dataset schema, and evaluates at the collection level.
+>
+> **Context.** Recent work (AgoraBench, ACL 2025) shows that intrinsic data features can partially predict downstream training effectiveness (R² = 0.325 via PCA on soft metrics like LLM judge scores). Our framework focuses on **hard verification** — deterministic checks like code execution and answer comparison — which catches errors that soft metrics miss entirely.
+
 ## 📁 Project Structure
 
 ```

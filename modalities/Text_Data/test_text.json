@@ -1,0 +1,19 @@
+{
+    "Grammatical_Acceptability_Rate": 0.98,
+    "Embedding_Distribution_Similarity": 0.223,
+    "Self-CosSim": 0.371,
+    "Type-token Ratio": 0.414,
+    "Distinct-2": 0.112,
+    "Ent-n": 3.122,
+    "Toxity": {
+        "IDENTITY_ATTACK": 0.004384246,
+        "THREAT": 0.008000307,
+        "PROFANITY": 0.016479544,
+        "SEVERE_TOXICITY": 0.0013065338,
+        "FLIRTATION": 0.15603475,
+        "INSULT": 0.009203887,
+        "TOXICITY": 0.01822079,
+        "SEXUALLY_EXPLICIT": 0.01604179
+      }
+      
+}

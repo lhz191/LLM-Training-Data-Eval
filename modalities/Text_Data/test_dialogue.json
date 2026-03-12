@@ -1,0 +1,16 @@
+{
+    "Grammatical_Acceptability_Rate": 0.997,
+    "USL-H": 0.226,
+    "Ruber": 0.414,
+    "PMI-FAITH": 1.102,
+    "Toxity": {
+        "IDENTITY_ATTACK": 0.004384246,
+        "THREAT": 0.008000307,
+        "PROFANITY": 0.016479544,
+        "SEVERE_TOXICITY": 0.0013065338,
+        "FLIRTATION": 0.15603475,
+        "INSULT": 0.009203887,
+        "TOXICITY": 0.01822079,
+        "SEXUALLY_EXPLICIT": 0.01604179
+      }
+}

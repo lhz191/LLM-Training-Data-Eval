@@ -1,0 +1,22 @@
+synthetic_path: ""      # path to synthetic CSV
+real_path: ""           # path to real / reference CSV
+holdout_path: ""        # path to holdout CSV (for DCR baseline & MIA)
+output_dir: "eval_res"
+
+metrics:
+  validity: true
+  fidelity: true
+  diversity: true
+  privacy: true
+  fairness: false
+
+validity:
+  chi2_threshold: 0.95
+  constraints: []
+
+fidelity:
+  mixed_n_bins: 10
+
+fairness:
+  protected_attribute: ""
+  label_column: ""

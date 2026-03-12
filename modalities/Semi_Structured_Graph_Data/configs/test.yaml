@@ -1,0 +1,44 @@
+jsonl_path: ""
+output_dir: "eval_res"
+mode: "graph"    # "graph" | "json" | "log"
+
+metrics:
+  # Graph
+  graph_validity: true
+  graph_fidelity_mmd: true
+  graph_diversity: true
+  graph_robustness: true
+  # JSON
+  json_validity: true
+  json_fidelity: true
+  # Log
+  log_validity: true
+  log_fidelity: true
+  log_privacy: false
+
+graph:
+  graph_field: "graph"
+  ref_field: "ref_graph"
+  example_field: ""          # prompt 中的示例图 (Novelty)
+  target_field: ""           # 目标 atlas 图 (GAD)
+  format: "edge_list"
+  directed: false
+  mmd_statistics: ["degree", "clustering", "orbits", "spectral"]
+  gad_cap: 0.0              # 0 = 不截断
+  gad_timeout: 30.0
+
+json_eval:
+  json_field: "output"
+  ref_field: "reference"
+  schema_path: ""
+
+log_eval:
+  template_field: "EventTemplate"
+  ref_template_field: "RefEventTemplate"
+  text_field: "LogText"
+  ref_text_field: "RefLogText"
+  variables_field: "Variables"
+  ref_variables_field: "RefVariables"
+  level_field: "Level"
+  ref_level_field: "RefLevel"
+  privacy_ratings_field: "PrivacyRatings"

@@ -1,0 +1,11 @@
+dataset: "toolbench"
+data_path: "/mnt/petrelfs/liuhaoze/datasets/Agent_Data/toolbench_official/toolllama_G123_dfs_eval.json"
+executor_type: "general"    # "toolbench" includes LLM Judge (slow), "general" is pure static check
+toolenv_path: "/mnt/petrelfs/liuhaoze/datasets/Agent_Data/toolbench_official/toolenv/tools"
+output_dir: "/tmp/agent_audit_toolbench"
+
+metrics:
+  validity: true
+  fidelity: false
+  diversity: false
+  safety: false

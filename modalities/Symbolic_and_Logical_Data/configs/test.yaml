@@ -1,0 +1,31 @@
+# ── Data loading (uses math_eval loaders + executors) ────
+dataset: "openmath"
+data_path: ""
+executor_type: ""
+output_dir: "eval_res"
+
+metrics:
+  validity: true
+  fidelity: true
+  faithfulness: true
+  robustness: false
+
+validity:
+  acc_verify: true
+  pass_rate: true
+  acc_proof: true
+  consistency: true
+
+fidelity:
+  acc_sc: true
+  agreement: true
+  llm_human_correlation: true
+  q_reason: true
+
+faithfulness:
+  val_step: true
+  align_entail: true
+
+robustness:
+  in_domain_accuracy: 0.0
+  out_domain_accuracy: 0.0

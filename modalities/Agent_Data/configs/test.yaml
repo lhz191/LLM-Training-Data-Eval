@@ -1,0 +1,64 @@
+# ── Data loading (uses api_agent_eval loaders + executors) ──
+dataset: "toolbench"                    # toolbench / xlam / arcee-agent / general
+data_path: ""                           # path to dataset file
+executor_type: ""                       # defaults to same as dataset
+toolenv_path: ""                        # ToolBench: path to toolenv/tools
+
+# legacy: bypass loader/executor, use raw JSONL
+jsonl_path: ""
+output_dir: "eval_res"
+
+metrics:
+  validity: true
+  fidelity: false
+  diversity: true
+  safety: true
+
+# ── Fidelity ─────────────────────────────────────────────
+fidelity:
+  fid:
+    enabled: false
+    real_dir: ""
+    gen_dir: ""
+    mode: "clean"
+    batch_size: 64
+  fvd:
+    enabled: false
+    real_features_path: ""
+    gen_features_path: ""
+  ssim: false
+  mse_psnr: false
+  lpips:
+    enabled: false
+    net: "alex"
+  semantic_alignment:
+    enabled: false
+    model_name: "openai/clip-vit-base-patch32"
+    threshold: 0.25
+    batch_size: 32
+
+# ── Diversity ────────────────────────────────────────────
+diversity:
+  agent_diversity: true
+  road_diversity: true
+  vbench:
+    enabled: false
+    full_json_dir: ""
+    output_path: "./vbench_results"
+    dimensions: []
+
+# ── Safety ───────────────────────────────────────────────
+safety:
+  rvr: true
+  rvr_by_type: true
+  route_incompleteness: true
+  mscr: true
+  kinematics: true
+  safety_satisfaction: true
+  hazard_rejection: true
+  ttc: true
+  mdc: true
+
+kinematics:
+  dt: 0.1
+  hard_brake_threshold: 4.0

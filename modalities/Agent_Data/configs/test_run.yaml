@@ -1,0 +1,9 @@
+dataset: "xlam"
+data_path: "/mnt/petrelfs/liuhaoze/datasets/Agent_Data/xlam_60k.jsonl"
+output_dir: "/tmp/agent_audit_test"
+
+metrics:
+  validity: true
+  fidelity: false
+  diversity: false
+  safety: false

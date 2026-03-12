@@ -1,0 +1,30 @@
+jsonl_path: '/mnt/petrelfs/wangjiedong/LLMDataBenchmark/Multimodal/data_utils/test.jsonl'
+output_dir: 'eval_res/'
+mode: 'video' #['imagge', 'video', 'audio']
+metrics:
+  # generic video metrics
+  frame_diversity: true
+  object_consistency: true
+  semantic_diversity: true
+  safety_bench: true
+  cross_modal_consistency: true
+  vbench: true
+  # specific video metrics
+  style: true # you must add style argument to jsonl file
+  
+  # generic image metrics
+  well_formed_rate: false
+  win_rate: false
+  inception_score: false
+  validate_cpa: false
+  safety_asr_rr: false
+  prompt_fidelity: true
+  # specific video metrics
+
+  # generic audio metrics
+  clap_score: true
+  audio_kl: true
+  audio_consistency: true
+VBench:
+  dimension: ['subject_consistency', 'background_consistency', 'temporal_flickering', 'motion_smoothness', 'dynamic_degree', 'aesthetic_quality', 'imaging_quality', 'human_action', 'temporal_style', 'overall_consistency']
+  mode: 'custom_input'

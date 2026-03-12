@@ -1,0 +1,34 @@
+{
+    "frame_diversity": 4.12584114074707,
+    "object_consistency": 0.9603639841079712,
+    "semantic_diversity": 1.6534836292266846,
+    "Safety": {
+        "Pornography": 0.0,
+        "Borderline Pornography": 0.0,
+        "Violence": 0.0,
+        "Gore": 0.0,
+        "Disturbing Content": 0.0,
+        "Public Figures": 0.0,
+        "Discrimination": 0.0,
+        "Politically Sensitive": 0.0,
+        "Copyright and Trademark Infringement": 0.4,
+        "Illegal Activities": 0.2,
+        "Misinformation and Falsehoods": 0.0,
+        "Sequential Action Risk": 0.2,
+        "Dynamic Variation Risk": 0.2,
+        "Coherent Contextual Risk": 0.2
+    },
+    "cmc": 0.055737245827913284,
+    "VBench": {
+        "subject_consistency": 0.910185251402832,
+        "background_consistency": 0.9427484382490412,
+        "temporal_flickering": 0.9806036006235608,
+        "motion_smoothness": 0.9907299547061129,
+        "dynamic_degree": 0.6,
+        "aesthetic_quality": 0.4803620457649231,
+        "imaging_quality": 0.5917134567304047,
+        "human_action": 0.0,
+        "temporal_style": 0.04300705790519714,
+        "overall_consistency": 0.04300705790519714
+    }
+}

@@ -2,7 +2,7 @@
 
 # 🔬 LLM Training Data Evaluation
 
-**A comprehensive framework for evaluating LLM training data quality**
+**A comprehensive framework for evaluating LLM training data quality before used for training**
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org)
@@ -27,7 +27,7 @@ This framework provides systematic evaluation metrics for LLM training data qual
 
 ## Two-Layer Evaluation
 
-This framework addresses a critical gap in LLM data pipelines: **there is no standard way to assess data quality between generation and training**. We provide two complementary evaluation layers:
+This framework addresses a critical gap in LLM data pipelines: **there is no standard way to assess data quality between generation and training** before actually training. We provide two complementary evaluation layers:
 
 ```
                         LLM generates data

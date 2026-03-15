@@ -82,6 +82,12 @@ MODALITIES = {
         'datasets': [],
         'metrics': ['holistic_fidelity', 'semantic_diversity', 'safety_bench'],
     },
+    'report': {
+        'name': 'Image-to-Report',
+        'module': 'modalities.Multimodal_Data.image_to_report_eval.scripts.run_full_test',
+        'datasets': ['iu_xray', 'sharegpt4v'],
+        'metrics': ['format_check', 'validity', 'report_quality', 'duplication', 'diversity'],
+    },
 }
 
 

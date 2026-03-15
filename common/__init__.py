@@ -26,6 +26,8 @@ from .base import (
     BaseHTMLLocator,
     # 答案提取
     BaseAnswerExtractor,
+    # 质量评估
+    BaseQualityChecker,
 )
 
 from .registry import (
@@ -49,6 +51,7 @@ __all__ = [
     "BaseResultComparator",
     "BaseHTMLLocator",
     "BaseAnswerExtractor",
+    "BaseQualityChecker",
     # 注册表
     "register_checker",
     "get_checker",

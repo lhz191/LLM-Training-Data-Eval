@@ -11,8 +11,9 @@ Validity 指标 - Image-to-Report 数据有效性检查
    - 图片基本属性（尺寸、格式、通道数）
 
 2. 报告有效性 (Report Validity, LLM Multimodal Judge):
-   - 图文对应性: report 是否描述了图片中的内容
-   - 指令合规性: report 是否符合 instruction 的要求
+   - 报告忠实性 (Faithfulness): 报告描述的内容在图片中是否真实存在 (report → image)
+   - 指令合规性 (Compliance): 报告是否按照指令的要求来写 (report → instruction)
+   - 指令相关性 (Relevance): 指令对于该图片是否合理/恰当 (instruction ↔ image)
 
 所有数据集共用同一套流程，不需要数据集特有的 checker。
 
@@ -69,28 +70,39 @@ REPORT_VALIDITY_PROMPT = """你是一个多模态数据质量评估专家。请�
 【报告 (Report)】
 {report}
 
-请评估以下两个维度（每个维度只能打 0 / 0.5 / 1 分）：
+请逐句审查报告内容，并评估以下三个维度（每个维度只能打 0 / 0.5 / 1 分）：
 
-1. **图文对应性 (Correspondence)**：报告是否准确描述了图片中的内容？
-   - 1: 报告内容与图片高度吻合，描述了图片中的主要视觉元素
-   - 0.5: 报告部分描述了图片内容，但有遗漏或包含图片中不存在的内容
-   - 0: 报告与图片内容明显不符，或完全无关
+1. **报告忠实性 (Faithfulness)**：报告中描述的内容，在图片中是否真实存在？
+   - 请逐一检查报告中的每个描述/发现，判断图片是否支持该描述
+   - 1: 报告的所有描述均可在图片中得到验证，没有凭空捏造的内容
+   - 0.5: 报告大部分描述与图片一致，但包含少量图片无法验证的描述
+   - 0: 报告包含大量与图片不符或图片中不存在的描述
 
-2. **指令合规性 (Compliance)**：报告是否符合指令的要求？
+2. **指令合规性 (Compliance)**：报告是否按照指令的要求来写？
+   - 关注指令对格式、覆盖范围、关注点的具体要求
    - 1: 报告完全按照指令要求的格式和内容来组织
    - 0.5: 报告大体符合指令，但在格式或覆盖范围上有偏差
    - 0: 报告完全没有遵循指令的要求
 
+3. **指令相关性 (Relevance)**：指令对于这张图片来说是否合理/恰当？
+   - 1: 指令与图片高度匹配，是对该图片合理的任务要求
+   - 0.5: 指令与图片有一定关联，但部分要求对该图片不太适用
+   - 0: 指令与图片内容明显不相关，或对该图片完全不适用
+
 请以 JSON 格式输出：
 ```json
 {{
-    "correspondence": {{
+    "faithfulness": {{
         "score": 0/0.5/1,
-        "reason": "简要说明图文对应性判断理由"
+        "reason": "逐一列出报告中的关键描述，并说明图片是否支持"
     }},
     "compliance": {{
         "score": 0/0.5/1,
         "reason": "简要说明指令合规性判断理由"
+    }},
+    "relevance": {{
+        "score": 0/0.5/1,
+        "reason": "简要说明指令与图片的匹配程度"
     }}
 }}
 ```
@@ -265,12 +277,14 @@ def _call_multimodal_llm(
 
 def _parse_llm_response(response: str) -> Dict[str, Any]:
     """解析 LLM Judge 响应"""
+    _default = {
+        "faithfulness": {"score": 0.0, "reason": "LLM 调用失败"},
+        "compliance": {"score": 0.0, "reason": "LLM 调用失败"},
+        "relevance": {"score": 0.0, "reason": "LLM 调用失败"},
+        "parse_error": True,
+    }
     if not response:
-        return {
-            "correspondence": {"score": 0.0, "reason": "LLM 调用失败"},
-            "compliance": {"score": 0.0, "reason": "LLM 调用失败"},
-            "parse_error": True,
-        }
+        return _default
 
     try:
         text = response.strip()
@@ -281,12 +295,11 @@ def _parse_llm_response(response: str) -> Dict[str, Any]:
 
         return json.loads(text.strip())
     except Exception as e:
-        return {
-            "correspondence": {"score": 0.0, "reason": f"解析失败: {e}"},
-            "compliance": {"score": 0.0, "reason": f"解析失败: {e}"},
-            "parse_error": True,
-            "raw_response": response,
-        }
+        _default["faithfulness"]["reason"] = f"解析失败: {e}"
+        _default["compliance"]["reason"] = f"解析失败: {e}"
+        _default["relevance"]["reason"] = f"解析失败: {e}"
+        _default["raw_response"] = response
+        return _default
 
 
 # =============================================================================
@@ -357,14 +370,17 @@ def _process_single_sample(
 
     parsed = _parse_llm_response(response)
 
-    correspondence_score = parsed.get("correspondence", {}).get("score", 0.0)
+    faithfulness_score = parsed.get("faithfulness", {}).get("score", 0.0)
     compliance_score = parsed.get("compliance", {}).get("score", 0.0)
+    relevance_score = parsed.get("relevance", {}).get("score", 0.0)
 
     result["report_validity"] = {
-        "correspondence": parsed.get("correspondence", {}),
+        "faithfulness": parsed.get("faithfulness", {}),
         "compliance": parsed.get("compliance", {}),
-        "correspondence_score": float(correspondence_score),
+        "relevance": parsed.get("relevance", {}),
+        "faithfulness_score": float(faithfulness_score),
         "compliance_score": float(compliance_score),
+        "relevance_score": float(relevance_score),
         "llm_error": parsed.get("parse_error", False),
     }
 
@@ -433,8 +449,9 @@ def compute_validity(
     total = 0
     image_valid_count = 0
     image_error_count = 0
-    total_correspondence = 0.0
+    total_faithfulness = 0.0
     total_compliance = 0.0
+    total_relevance = 0.0
     llm_evaluated = 0
     llm_failures = 0
 
@@ -468,13 +485,15 @@ def compute_validity(
                     if rv.get("llm_error", False):
                         llm_failures += 1
                     else:
-                        total_correspondence += rv.get("correspondence_score", 0.0)
+                        total_faithfulness += rv.get("faithfulness_score", 0.0)
                         total_compliance += rv.get("compliance_score", 0.0)
+                        total_relevance += rv.get("relevance_score", 0.0)
 
                 if progress_interval and total % progress_interval == 0:
                     _print_progress(total, total_to_process, start_time,
                                     image_valid_count, llm_evaluated,
-                                    total_correspondence, total_compliance)
+                                    total_faithfulness, total_compliance,
+                                    total_relevance)
     else:
         for sample in all_samples:
             total += 1
@@ -492,21 +511,24 @@ def compute_validity(
                 if rv.get("llm_error", False):
                     llm_failures += 1
                 else:
-                    total_correspondence += rv.get("correspondence_score", 0.0)
+                    total_faithfulness += rv.get("faithfulness_score", 0.0)
                     total_compliance += rv.get("compliance_score", 0.0)
+                    total_relevance += rv.get("relevance_score", 0.0)
 
             if progress_interval and total % progress_interval == 0:
                 _print_progress(total, total_to_process, start_time,
                                 image_valid_count, llm_evaluated,
-                                total_correspondence, total_compliance)
+                                total_faithfulness, total_compliance,
+                                total_relevance)
 
     elapsed = time.time() - start_time
 
     # 计算指标
     image_valid_rate = image_valid_count / total if total > 0 else 0.0
     llm_success = llm_evaluated - llm_failures
-    avg_correspondence = total_correspondence / llm_success if llm_success > 0 else 0.0
+    avg_faithfulness = total_faithfulness / llm_success if llm_success > 0 else 0.0
     avg_compliance = total_compliance / llm_success if llm_success > 0 else 0.0
+    avg_relevance = total_relevance / llm_success if llm_success > 0 else 0.0
 
     results = {
         "dataset": dataset_name,
@@ -526,8 +548,9 @@ def compute_validity(
         # 报告有效性
         "llm_evaluated": llm_evaluated,
         "llm_failures": llm_failures,
-        "avg_correspondence": avg_correspondence,
+        "avg_faithfulness": avg_faithfulness,
         "avg_compliance": avg_compliance,
+        "avg_relevance": avg_relevance,
 
         # 详细结果
         "sample_results": sample_results,
@@ -558,8 +581,9 @@ def compute_validity(
         print(f"【报告有效性】(LLM Judge: {LLM_MODEL})")
         print(f"  LLM 评估数:   {llm_evaluated:,}")
         print(f"  LLM 失败:     {llm_failures}")
-        print(f"  图文对应性:   {avg_correspondence:.3f}")
+        print(f"  报告忠实性:   {avg_faithfulness:.3f}")
         print(f"  指令合规性:   {avg_compliance:.3f}")
+        print(f"  指令相关性:   {avg_relevance:.3f}")
         print()
 
         # 分数分布
@@ -581,46 +605,48 @@ def compute_validity(
 
 def _print_progress(total, total_to_process, start_time,
                     image_valid_count, llm_evaluated,
-                    total_correspondence, total_compliance):
+                    total_faithfulness, total_compliance,
+                    total_relevance):
     """打印进度"""
     elapsed = time.time() - start_time
     rate = total / elapsed if elapsed > 0 else 0
     img_rate = image_valid_count / total if total > 0 else 0
     llm_success = llm_evaluated
-    avg_corr = total_correspondence / llm_success if llm_success > 0 else 0
+    avg_faith = total_faithfulness / llm_success if llm_success > 0 else 0
     avg_comp = total_compliance / llm_success if llm_success > 0 else 0
+    avg_rel = total_relevance / llm_success if llm_success > 0 else 0
     print(
         f"  [{total:,}/{total_to_process:,}] {rate:.1f} 条/秒 | "
         f"图片有效: {img_rate:.2%} | "
-        f"对应: {avg_corr:.2f} | 合规: {avg_comp:.2f}"
+        f"忠实: {avg_faith:.2f} | 合规: {avg_comp:.2f} | 相关: {avg_rel:.2f}"
     )
 
 
 def _print_score_distribution(sample_results: List[Dict]):
     """打印 LLM Judge 分数分布"""
-    corr_scores = []
+    faith_scores = []
     comp_scores = []
+    rel_scores = []
 
     for r in sample_results:
         rv = r.get("report_validity", {})
         if rv.get("skipped", False) or rv.get("llm_error", False):
             continue
-        corr_scores.append(rv.get("correspondence_score", 0.0))
+        faith_scores.append(rv.get("faithfulness_score", 0.0))
         comp_scores.append(rv.get("compliance_score", 0.0))
+        rel_scores.append(rv.get("relevance_score", 0.0))
 
-    if not corr_scores:
+    if not faith_scores:
         return
 
-    n = len(corr_scores)
-    print(f"  图文对应性分布 (N={n}):")
-    for score_val in [1.0, 0.5, 0.0]:
-        count = sum(1 for s in corr_scores if s == score_val)
-        print(f"    {score_val}: {count}/{n} ({100 * count / n:.1f}%)")
-
-    print(f"  指令合规性分布 (N={n}):")
-    for score_val in [1.0, 0.5, 0.0]:
-        count = sum(1 for s in comp_scores if s == score_val)
-        print(f"    {score_val}: {count}/{n} ({100 * count / n:.1f}%)")
+    n = len(faith_scores)
+    for label, scores in [("报告忠实性", faith_scores),
+                          ("指令合规性", comp_scores),
+                          ("指令相关性", rel_scores)]:
+        print(f"  {label}分布 (N={n}):")
+        for score_val in [1.0, 0.5, 0.0]:
+            count = sum(1 for s in scores if s == score_val)
+            print(f"    {score_val}: {count}/{n} ({100 * count / n:.1f}%)")
 
     print()
 

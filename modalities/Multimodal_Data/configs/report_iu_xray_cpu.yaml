@@ -1,0 +1,40 @@
+jsonl_path: ''
+output_dir: '/mnt/petrelfs/liuhaoze/main_new/modalities/Multimodal_Data/image_to_report_eval/results/iu_xray'
+mode: 'report'
+
+metrics:
+  # video (off)
+  frame_diversity: false
+  object_consistency: false
+  semantic_diversity: false
+  safety_bench: false
+  cross_modal_consistency: false
+  vbench: false
+  style: false
+
+  # image — 需要 GPU，先关掉
+  well_formed_rate: false
+  win_rate: false
+  validate_cpa: false
+  safety_asr_rr: false
+  inception_score: false
+  prompt_fidelity: false
+  subject_fidelity: false
+
+  # text — CPU 可跑
+  self_cos_sim: true
+  grammaticality_rate: true
+  text_diversity: true
+
+  # audio (off)
+  clap_score: false
+  audio_kl: false
+  audio_consistency: false
+  fad: false
+
+report:
+  dataset: 'iu_xray'
+  data_path: '/mnt/petrelfs/liuhaoze/datasets/Medical_Data/IU-Xray'
+  image_base_dir: '/mnt/petrelfs/liuhaoze/datasets/Medical_Data/IU-Xray'
+  split: 'train'
+  max_samples: 0

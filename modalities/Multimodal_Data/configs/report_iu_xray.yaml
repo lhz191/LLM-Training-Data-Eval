@@ -1,0 +1,50 @@
+jsonl_path: ''
+output_dir: '/mnt/petrelfs/liuhaoze/main_new/modalities/Multimodal_Data/image_to_report_eval/results/iu_xray'
+mode: 'report'
+
+metrics:
+  # video (off)
+  frame_diversity: false
+  object_consistency: false
+  semantic_diversity: false
+  safety_bench: false
+  cross_modal_consistency: false
+  vbench: false
+  style: false
+
+  # image / report  — Layer 1 通用指标
+  well_formed_rate: false
+  win_rate: false
+  validate_cpa: false
+  safety_asr_rr: false
+  inception_score: true         # Inception Score — 图像质量 / 多样性
+  prompt_fidelity: true         # CLIP text-image alignment（caption ↔ image）
+  subject_fidelity: false
+
+  # text — 复用 Text_Data/metrics
+  self_cos_sim: true            # Self-CosSim — 语义冗余度
+  grammaticality_rate: true     # RoBERTa-CoLA — 语法可接受性
+  text_diversity: true          # TTR / Distinct-N / n-gram Entropy
+
+  # audio (off)
+  clap_score: false
+  audio_kl: false
+  audio_consistency: false
+  fad: false
+
+# ---- loader 参数 ----
+report:
+  dataset: 'iu_xray'
+  data_path: '/mnt/petrelfs/liuhaoze/datasets/Medical_Data/IU-Xray'
+  image_base_dir: '/mnt/petrelfs/liuhaoze/datasets/Medical_Data/IU-Xray'
+  split: 'train'
+  max_samples: 0
+
+# ---- 指标参数 ----
+inception_score:
+  enabled: true
+  batch_size: 64
+  splits: 10
+  num_workers: 4
+  seed: 0
+  allow_download: true

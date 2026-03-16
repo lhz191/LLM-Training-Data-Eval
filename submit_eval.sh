@@ -63,6 +63,9 @@ case ${MODALITY} in
     math)
         RESULTS_DIR="${PROJECT_ROOT}/modalities/Symbolic_and_Logical_Data/math_eval/results/${DATASET}"
         ;;
+    report)
+        RESULTS_DIR="${PROJECT_ROOT}/modalities/Multimodal_Data/image_to_report_eval/results/${DATASET}"
+        ;;
     image)
         RESULTS_DIR="${PROJECT_ROOT}/modalities/Vision_Language_Data/image_text_eval/results/${DATASET}"
         ;;
@@ -85,13 +88,20 @@ JOB_NAME="${MODALITY}_${DATASET}_${METRIC}"
 # ============ 生成 SBATCH 脚本 ============
 SBATCH_SCRIPT=$(mktemp /tmp/sbatch_eval_XXXXXX.sh)
 
+# GPU 行：NUM_GPUS=0 时不加 --gres（兼容 CPU-only 分区）
+if [ "${NUM_GPUS}" -gt 0 ] 2>/dev/null; then
+    GPU_LINE="#SBATCH --gres=gpu:${NUM_GPUS}"
+else
+    GPU_LINE=""
+fi
+
 cat > "${SBATCH_SCRIPT}" << EOF
 #!/bin/bash
 #SBATCH --job-name=${JOB_NAME}
 #SBATCH -p ${PARTITION}
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:${NUM_GPUS}
+${GPU_LINE}
 #SBATCH --cpus-per-task=${CPUS}
 #SBATCH --time=${TIME_LIMIT}
 #SBATCH --output=${LOG_DIR}/${METRIC}_results_%j.log

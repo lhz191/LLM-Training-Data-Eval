@@ -67,7 +67,7 @@ from data_types import ImageToReportSample
 # =============================================================================
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_MODELS_DIR = os.path.join(_SCRIPT_DIR, "models")
+_MODELS_DIR = os.path.join(_SCRIPT_DIR, "..", "..", "models")
 
 EMBEDDING_MODELS = {
     "all-MiniLM-L6-v2": {

@@ -32,6 +32,13 @@ _C.metrics.clap_score = False
 _C.metrics.audio_kl = False
 _C.metrics.audio_consistency = False
 
+# fad (audio)
+_C.metrics.fad = False
+
+# text metrics (reused from Text_Data/metrics for report mode)
+_C.metrics.self_cos_sim = False
+_C.metrics.grammaticality_rate = False
+_C.metrics.text_diversity = False
 
 # ======================================================
 # SafetyBench
@@ -154,6 +161,23 @@ _C.safety_asr_rr.refusal_field = "is_refusal"
 _C.safety_asr_rr.unsafe_value = "unsafe"
 _C.safety_asr_rr.refusal_value = "refusal"
 _C.safety_asr_rr.refusal_strategy = "gpt"        # choices: "gpt", "heuristic"
+
+
+# ======================================================
+# Report (Image-to-Report) Evaluation
+# ======================================================
+_C.report = CN()
+_C.report.dataset = ''          # 'iu_xray' or 'sharegpt4v'
+_C.report.data_path = ''
+_C.report.image_base_dir = ''
+_C.report.split = 'train'
+_C.report.max_samples = 0       # 0 = 全量
+_C.report.parallel = False
+_C.report.workers = 8
+_C.report.skip_llm = False
+_C.report.embedding_model = 'all-MiniLM-L6-v2'
+_C.report.diversity_method = 'knn'
+_C.report.near_dup_threshold = 0.95
 
 
 def get_cfg(config_file_path):

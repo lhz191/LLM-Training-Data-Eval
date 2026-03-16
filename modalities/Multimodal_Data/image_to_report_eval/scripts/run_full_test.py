@@ -47,8 +47,8 @@ from datetime import datetime
 DATASETS = {
     'iu_xray': {
         'name': 'IU X-Ray',
-        'data_path': '/mnt/petrelfs/liuhaoze/datasets/Multimodal_Data/IU-Xray',
-        'image_base_dir': '/mnt/petrelfs/liuhaoze/datasets/Multimodal_Data/IU-Xray',
+        'data_path': '/mnt/petrelfs/liuhaoze/datasets/Medical_Data/IU-Xray',
+        'image_base_dir': '/mnt/petrelfs/liuhaoze/datasets/Medical_Data/IU-Xray',
         'split': 'train',
         'loader': 'iu_xray',
         'format_checker': 'iu_xray',

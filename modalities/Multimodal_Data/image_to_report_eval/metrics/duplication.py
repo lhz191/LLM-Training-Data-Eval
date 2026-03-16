@@ -40,7 +40,6 @@ import sys
 import json
 import time
 import hashlib
-import random
 import numpy as np
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -59,7 +58,7 @@ from data_types import ImageToReportSample
 # =============================================================================
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_MODELS_DIR = os.path.join(_SCRIPT_DIR, "models")
+_MODELS_DIR = os.path.join(_SCRIPT_DIR, "..", "..", "models")
 
 EMBEDDING_MODELS = {
     "all-MiniLM-L6-v2": {
@@ -140,16 +139,16 @@ def _detect_exact_duplicates(
     n_dup_groups = len(dup_groups)
 
     top_groups = []
-    for h, ids in sorted(dup_groups.items(), key=lambda x: -len(x[1]))[:20]:
+    for h, ids in sorted(dup_groups.items(), key=lambda x: -len(x[1])):
         report_text = ""
         for s in samples:
             if s.sample_id == ids[0]:
-                report_text = s.report[:200]
+                report_text = s.report
                 break
         top_groups.append({
             "count": len(ids),
-            "sample_ids": ids[:10],
-            "report_preview": report_text,
+            "sample_ids": ids,
+            "report_text": report_text,
         })
 
     return {
@@ -170,87 +169,86 @@ def _detect_near_duplicates(
     samples: List[ImageToReportSample],
     embeddings: np.ndarray,
     threshold: float = 0.95,
-    max_pairs_to_report: int = 50,
-    scan_sample_size: Optional[int] = None,
-    random_seed: int = 42,
 ) -> Dict[str, Any]:
     """
     基于 embedding 余弦相似度检测近似重复。
     embedding 已经 L2 归一化，点积即余弦相似度。
 
-    当样本量大时，全量 O(N^2) 不现实。采用分块策略：
-    随机采样 scan_sample_size 个样本作为查询，对全集做 KNN 检索。
+    小数据集 (<=10000) 直接全量矩阵计算；大数据集用 KNN 近似。
     """
     n = len(samples)
 
-    if scan_sample_size and scan_sample_size < n:
-        random.seed(random_seed)
-        query_indices = random.sample(range(n), scan_sample_size)
-    else:
-        query_indices = list(range(n))
-        scan_sample_size = n
-
-    from sklearn.neighbors import NearestNeighbors
-
-    k_neighbors = min(20, n - 1)
-    nn = NearestNeighbors(n_neighbors=k_neighbors + 1, metric="cosine", algorithm="auto", n_jobs=1)
-    nn.fit(embeddings)
-
-    query_emb = embeddings[query_indices]
-    distances, indices = nn.kneighbors(query_emb)
-
     near_dup_pairs: List[Tuple[str, str, float]] = []
-    seen_pairs: Set[Tuple[str, str]] = set()
 
-    for qi, q_idx in enumerate(query_indices):
-        for ni in range(1, k_neighbors + 1):
-            neighbor_idx = indices[qi][ni]
-            cosine_dist = distances[qi][ni]
-            similarity = 1.0 - cosine_dist
+    if n <= 10000:
+        sim_matrix = embeddings @ embeddings.T
+        for i in range(n):
+            for j in range(i + 1, n):
+                sim = float(sim_matrix[i, j])
+                if sim >= threshold and samples[i].report != samples[j].report:
+                    near_dup_pairs.append((
+                        samples[i].sample_id,
+                        samples[j].sample_id,
+                        sim,
+                    ))
+    else:
+        from sklearn.neighbors import NearestNeighbors
 
-            if similarity < threshold:
-                break
+        k_neighbors = min(50, n - 1)
+        nn = NearestNeighbors(n_neighbors=k_neighbors + 1, metric="cosine", algorithm="auto", n_jobs=-1)
+        nn.fit(embeddings)
+        distances, indices = nn.kneighbors(embeddings)
 
-            if q_idx == neighbor_idx:
-                continue
-            if samples[q_idx].report == samples[neighbor_idx].report:
-                continue
+        seen_pairs: Set[Tuple[str, str]] = set()
+        for qi in range(n):
+            for ni in range(1, k_neighbors + 1):
+                neighbor_idx = indices[qi][ni]
+                similarity = 1.0 - float(distances[qi][ni])
 
-            pair_key = tuple(sorted([samples[q_idx].sample_id, samples[neighbor_idx].sample_id]))
-            if pair_key in seen_pairs:
-                continue
-            seen_pairs.add(pair_key)
+                if similarity < threshold:
+                    break
+                if samples[qi].report == samples[neighbor_idx].report:
+                    continue
 
-            near_dup_pairs.append((
-                samples[q_idx].sample_id,
-                samples[neighbor_idx].sample_id,
-                float(similarity),
-            ))
+                pair_key = (min(qi, neighbor_idx), max(qi, neighbor_idx))
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+
+                near_dup_pairs.append((
+                    samples[qi].sample_id,
+                    samples[neighbor_idx].sample_id,
+                    similarity,
+                ))
 
     near_dup_pairs.sort(key=lambda x: -x[2])
 
+    involved_ids: Set[str] = set()
+    for id_a, id_b, _ in near_dup_pairs:
+        involved_ids.add(id_a)
+        involved_ids.add(id_b)
+
+    sample_id_to_report = {s.sample_id: s.report for s in samples}
+
     reported_pairs = []
-    for id_a, id_b, sim in near_dup_pairs[:max_pairs_to_report]:
-        text_a = text_b = ""
-        for s in samples:
-            if s.sample_id == id_a:
-                text_a = s.report[:150]
-            elif s.sample_id == id_b:
-                text_b = s.report[:150]
+    for id_a, id_b, sim in near_dup_pairs:
         reported_pairs.append({
             "id_a": id_a,
             "id_b": id_b,
             "similarity": round(sim, 4),
-            "report_a_preview": text_a,
-            "report_b_preview": text_b,
+            "report_a": sample_id_to_report.get(id_a, ""),
+            "report_b": sample_id_to_report.get(id_b, ""),
         })
+
+    n_involved = len(involved_ids)
 
     return {
         "threshold": threshold,
-        "n_scanned_queries": len(query_indices),
+        "n_total_samples": n,
         "n_near_duplicate_pairs": len(near_dup_pairs),
-        "near_duplicate_rate": len(near_dup_pairs) / max(len(query_indices), 1),
-        "top_near_duplicate_pairs": reported_pairs,
+        "n_involved_samples": n_involved,
+        "involved_sample_rate": n_involved / n if n > 0 else 0.0,
+        "near_duplicate_pairs": reported_pairs,
     }
 
 
@@ -279,11 +277,11 @@ def _detect_image_duplicates(
     ))
 
     top_shared = []
-    for img, ids in sorted(dup_images.items(), key=lambda x: -len(x[1]))[:20]:
+    for img, ids in sorted(dup_images.items(), key=lambda x: -len(x[1])):
         top_shared.append({
             "image_path": img,
             "n_samples": len(ids),
-            "sample_ids": ids[:10],
+            "sample_ids": ids,
         })
 
     return {
@@ -306,7 +304,6 @@ def compute_duplication(
     embedding_cache_path: Optional[str] = None,
     embedding_batch_size: int = 64,
     near_dup_threshold: float = 0.95,
-    near_dup_scan_size: Optional[int] = 2000,
     output_file: Optional[str] = None,
     max_samples: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -320,7 +317,6 @@ def compute_duplication(
         embedding_cache_path: embedding 缓存 .npy 路径（与 diversity 共享）
         embedding_batch_size: embedding 生成 batch size
         near_dup_threshold: 近似重复的余弦相似度阈值
-        near_dup_scan_size: 近似重复扫描的查询采样数（None=全量，大数据集建议 2000）
         output_file: 结果保存路径
         max_samples: 最大样本数
     """
@@ -355,7 +351,7 @@ def compute_duplication(
     print(f"  涉及重复样本: {exact_dup['n_duplicate_samples']:,} ({exact_dup['duplicate_rate']:.2%})")
     if exact_dup["top_duplicate_groups"]:
         print(f"  最大重复组: {exact_dup['top_duplicate_groups'][0]['count']} 条相同")
-        print(f"    预览: {exact_dup['top_duplicate_groups'][0]['report_preview'][:100]}...")
+        print(f"    预览: {exact_dup['top_duplicate_groups'][0]['report_text'][:100]}...")
     print()
 
     # 2. 近似重复
@@ -373,15 +369,14 @@ def compute_duplication(
     near_dup = _detect_near_duplicates(
         samples, embeddings,
         threshold=near_dup_threshold,
-        scan_sample_size=near_dup_scan_size,
     )
-    print(f"  扫描查询数: {near_dup['n_scanned_queries']:,}")
     print(f"  近似重复对数: {near_dup['n_near_duplicate_pairs']}")
-    if near_dup["top_near_duplicate_pairs"]:
-        top = near_dup["top_near_duplicate_pairs"][0]
+    print(f"  涉及独立样本: {near_dup['n_involved_samples']} / {len(samples)} ({near_dup['involved_sample_rate']:.2%})")
+    if near_dup["near_duplicate_pairs"]:
+        top = near_dup["near_duplicate_pairs"][0]
         print(f"  最相似一对 (sim={top['similarity']:.4f}):")
-        print(f"    A: {top['report_a_preview'][:80]}...")
-        print(f"    B: {top['report_b_preview'][:80]}...")
+        print(f"    A: {top['report_a'][:80]}...")
+        print(f"    B: {top['report_b'][:80]}...")
     print()
 
     # 3. 图像重复
@@ -431,6 +426,7 @@ def compute_duplication(
     print()
     print("【2. 近似重复】 (阈值 {:.2f})".format(near_dup_threshold))
     print(f"  近似重复对:   {near_dup['n_near_duplicate_pairs']}")
+    print(f"  涉及样本数:   {near_dup['n_involved_samples']} / {len(samples)} ({near_dup['involved_sample_rate']:.2%})")
     print()
     print("【3. 图像路径重复】")
     print(f"  共享图像:     {image_dup['n_shared_images']} / {image_dup['n_total_unique_images']:,}")

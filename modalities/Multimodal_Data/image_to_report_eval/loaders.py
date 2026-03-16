@@ -64,6 +64,16 @@ class IUXRayLoader(BaseLoader):
         self.split = split
         self.jsonl_path = f"{data_path}/{split}.jsonl"
 
+    # 原始数据中图片路径为 /iu_xray/image/CXR2384_IM-0942/0.png
+    # 本地目录结构为 images/CXR2384_IM-0942/0.png
+    _IMAGE_PREFIX = "/iu_xray/image/"
+
+    def _normalize_image_path(self, raw_path: str) -> str:
+        """将数据集中的绝对风格路径转为相对于 data_path 的本地路径"""
+        if raw_path.startswith(self._IMAGE_PREFIX):
+            return "images/" + raw_path[len(self._IMAGE_PREFIX):]
+        return raw_path
+
     def iterate(self) -> Iterator[ImageToReportSample]:
         with open(self.jsonl_path) as f:
             for idx, line in enumerate(tqdm(f, desc=f"Loading IU X-Ray ({self.split})")):
@@ -72,7 +82,7 @@ class IUXRayLoader(BaseLoader):
                     sample_id=f"iu_xray_{self.split}_{idx}",
                     instruction=record["query"],
                     report=record["response"],
-                    images=record["images"],
+                    images=[self._normalize_image_path(p) for p in record["images"]],
                     metadata={
                         "source_dataset": "iu_xray",
                         "domain": "medical",

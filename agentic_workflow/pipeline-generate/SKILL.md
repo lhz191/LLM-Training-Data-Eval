@@ -8,6 +8,12 @@ description: >-
 
 # Round 2: Pipeline Code Generation
 
+**Critical rules for this round:**
+- Read ALL existing code before writing anything. Every loader, every executor, every .py file in the matched task.
+- Do NOT write metrics. Metrics are Round 3.
+- The Reflect step at the end is MANDATORY. If you find gaps during reflection, you MUST fix the code before reporting. Do not just acknowledge the gap -- fix it.
+- Do NOT proceed to Round 3 until the user explicitly confirms.
+
 Round 1 gave you: modality, downstream task (Case A/B/C), field mapping, metrics analysis. Now write the code.
 
 ## Prerequisites
@@ -190,13 +196,14 @@ Present:
 
 ## Step 8: Reflect
 
-Before reporting to the user, stop and review your own work:
+Before reporting to the user, go through this checklist. For each item, if the answer is "no", go back and fix it NOW. Do not just report the gap -- fix it.
 
-- **data_types**: are the fixed fields truly universal for this downstream task? Did you miss any field that multiple similar datasets share? Is the metadata dict capturing all dataset-specific fields that might be useful for future metrics?
-- **Loader**: does it handle all edge cases in the data format? What happens with empty fields, missing keys, malformed entries? Did you test entries from different positions in the file (not just the first few)?
-- **Executor**: does the FormatChecker cover all the structural issues you observed in the data during Round 1? Are there format quirks you noticed but didn't write a check for? Does the ExecutabilityChecker validate everything that "correct" means for this dataset?
+- [ ] **data_types completeness**: are the fixed fields truly universal for this downstream task? Did you miss any field that multiple similar datasets share? Is the metadata dict capturing all dataset-specific fields that might be useful for future metrics?
+- [ ] **Loader edge cases**: does it handle empty fields, missing keys, malformed entries? Did you test entries from different positions in the file (not just the first few)?
+- [ ] **Executor coverage**: does the FormatChecker cover ALL structural issues you observed in the data during Round 1? Are there format quirks you noticed but didn't write a check for?
+- [ ] **ExecutabilityChecker thoroughness**: does it validate everything that "correct" means for this dataset? Did you miss any validation dimension?
 
-If you find gaps, fix the code before reporting. Do not leave known issues for later.
+If ANY item above is not satisfied, fix the code before proceeding to report.
 
 ## What NOT to Do
 

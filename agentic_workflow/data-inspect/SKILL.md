@@ -9,6 +9,11 @@ description: >-
 
 # Round 1: Data Inspection & Modality Detection
 
+**Critical rules for this round:**
+- Read the data THOROUGHLY. Do not skim. Read from beginning, middle, and end.
+- Do NOT write any code or create any files.
+- Do NOT proceed to Round 2 until the user explicitly confirms.
+
 User gives you a dataset path. Your job: deeply understand the data, determine its modality and downstream task, then tell the user how it maps to the evaluation framework.
 
 ## Why Detect Modality and Downstream Task?

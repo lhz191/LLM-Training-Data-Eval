@@ -8,6 +8,12 @@ description: >-
 
 # Round 3: Metric Design
 
+**Critical rules for this round:**
+- Use LLM-as-Judge for subjective quality dimensions. Do NOT skip LLM judge metrics just because they are harder to implement -- write them with a placeholder for the API call if needed.
+- Consider safety and trustworthiness, not just quality. If the task involves actions that could be harmful (code execution, API calls, web navigation, data access), you MUST include safety metrics.
+- The Reflect step at the end is MANDATORY. If you find missing metrics or executor gaps during reflection, you MUST go back and write them. Do not just acknowledge the gap -- fix it.
+- Do NOT proceed to Round 4 until the user explicitly confirms.
+
 Round 2 gave you: data_types, loader, and executor(s). Now design and write the evaluation metrics for this downstream task.
 
 ## What Drives Metric Design
@@ -161,13 +167,15 @@ Present:
 
 ## Step 8: Reflect
 
-Before reporting to the user, stop and think critically:
+Before reporting to the user, go through this checklist. For each item, if the answer is "no", go back and fix it NOW. Do not just report the gap -- fix it.
 
-- **Coverage**: have you thought about this dataset's value from the perspective of what the trained model needs to learn? If a data point is flawed in a way that would hurt the model, is there a metric that catches it? Think about the full chain: data quality -> training signal -> model behavior.
-- **Missing angles**: are there quality dimensions you haven't covered? For example, if the task involves multi-step reasoning, did you check trajectory coherence? If the data has natural language instructions, did you check instruction clarity? If the data is synthetic, did you check for template repetition?
-- **Executor gaps**: now that you've written the metrics, do any of them need executor support that doesn't exist yet? If so, go back to `executor/` and add it.
+- [ ] **Failure mode coverage**: for every way a data point could be flawed and hurt the trained model, is there a metric that catches it? Think: data quality -> training signal -> model behavior. If a failure mode is uncovered, write the metric now.
+- [ ] **LLM judge metrics**: did you use LLM-as-Judge for subjective dimensions (e.g., reasoning validity, instruction clarity, response helpfulness, semantic correctness)? If you skipped any subjective dimension, go back and write the LLM judge metric now.
+- [ ] **Safety metrics**: does this task involve potentially harmful actions? If yes, did you write safety/trustworthiness metrics? If not, write them now.
+- [ ] **Executor gaps**: do any metrics need executor support that doesn't exist yet? If so, go back to `executor/` and add it now.
+- [ ] **Synthetic data checks**: if the data is synthetic, did you check for template repetition, value collapse, hallucinated content? If not, add metrics for these now.
 
-If you find gaps, write the additional metrics or executors before reporting.
+If ANY item above is not satisfied, fix it before proceeding to report.
 
 ## What NOT to Do
 

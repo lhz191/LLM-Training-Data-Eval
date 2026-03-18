@@ -8,6 +8,11 @@ description: >-
 
 # Round 4: Run Audit
 
+**Critical rules for this round:**
+- After collecting results, you MUST re-read the actual dataset and cross-validate every metric's output against real data entries. Do NOT just trust the numbers.
+- If you find that a metric missed real problems or flagged non-problems, you MUST go back and fix the metric/executor. Do not just report the discrepancy -- fix it.
+- Do NOT present the report until you are confident the results accurately reflect the data's actual quality.
+
 Rounds 2-3 gave you: data_types, loader, executor(s), and metrics. Now run everything and produce the audit report.
 
 ## Step 1: Verify Everything is Registered

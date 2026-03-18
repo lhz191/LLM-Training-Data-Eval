@@ -77,6 +77,37 @@ At minimum, most downstream tasks need:
 
 Beyond that, design task-specific metrics based on what failure modes matter for this task's post-training objective.
 
+## LLM Judge and Guard Model Metrics
+
+Not everything can be checked with deterministic rules. Some metrics need LLM or specialized models. Write these alongside your other metrics -- do not defer them.
+
+### LLM-as-Judge for subjective quality
+
+Some quality dimensions are inherently subjective. Use LLM-as-Judge for these. Two patterns exist in the codebase:
+
+1. **Task-universal LLM judge** -- the same judge logic applies to all datasets in a task. Example: `reasoning_validity.py` (at `/modalities/Symbolic_and_Logical_Data/math_eval/metrics/reasoning_validity.py`) uses LLM to validate whether a math reasoning process is logically sound. This works the same for LILA and OpenMath.
+
+2. **Dataset-specific LLM judge via executor constants** -- different datasets need different judge prompts because what "correct" means differs. Examples:
+   - ToolBench's `constants.py` (at `/modalities/Agent_Data/api_agent_eval/executor/toolbench/constants.py`) defines `DERIVABILITY_PROMPT` and `RELEVANCE_PROMPT` specific to ToolBench's multi-turn format with final answers
+   - xLAM's `constants.py` (at `/modalities/Agent_Data/api_agent_eval/executor/xlam/constants.py`) defines `TOOL_SELECTION_PROMPT` for single-turn tool selection validation
+
+   These prompts are stored in the executor's `constants.py` and called by the executor during metric computation.
+
+When writing LLM judge metrics:
+- Design the prompt carefully with clear evaluation criteria and structured JSON output
+- Store dataset-specific prompts in `executor/<dataset>/constants.py`
+- Write the metric logic with a placeholder for the LLM call, then ask the user for their API configuration (OpenAI key, local model endpoint, etc.) to wire up the actual calls
+
+### Safety and Trustworthiness
+
+Quality is not the only dimension -- safety and trustworthiness also need evaluation. Two approaches exist:
+
+1. **Guard model evaluator** -- use a specialized safety model like AgentDoG (see `/modalities/Agent_Data/api_agent_eval/evaluator/agentdog.py`). The evaluator is loaded separately and passed to the metric function. The metric `trustworthy.py` (at `/modalities/Agent_Data/api_agent_eval/metrics/trustworthy.py`) wraps the guard model evaluation with standard metric output format. Supports binary (safe/unsafe) and fine-grained classification (risk source, failure mode, real world harm).
+
+2. **Rule-based safety checks** -- some safety dimensions can be checked without models (e.g., detecting hardcoded credentials, checking for SQL injection patterns in agent actions, flagging tool calls to sensitive endpoints).
+
+Consider whether this downstream task has safety-relevant actions. If the agent can execute code, call APIs, navigate web pages, or access user data, safety metrics are important.
+
 ## Step 3: Write the Metrics
 
 For each new metric, create a file in `metrics/`. Follow the existing pattern:
@@ -127,6 +158,16 @@ Present:
 3. Any executor changes made
 4. Sample output from a small test run
 5. Ready to proceed to Round 4 (audit-run)?
+
+## Step 8: Reflect
+
+Before reporting to the user, stop and think critically:
+
+- **Coverage**: have you thought about this dataset's value from the perspective of what the trained model needs to learn? If a data point is flawed in a way that would hurt the model, is there a metric that catches it? Think about the full chain: data quality -> training signal -> model behavior.
+- **Missing angles**: are there quality dimensions you haven't covered? For example, if the task involves multi-step reasoning, did you check trajectory coherence? If the data has natural language instructions, did you check instruction clarity? If the data is synthetic, did you check for template repetition?
+- **Executor gaps**: now that you've written the metrics, do any of them need executor support that doesn't exist yet? If so, go back to `executor/` and add it.
+
+If you find gaps, write the additional metrics or executors before reporting.
 
 ## What NOT to Do
 

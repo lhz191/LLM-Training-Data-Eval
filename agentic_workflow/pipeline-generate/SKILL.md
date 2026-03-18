@@ -188,6 +188,16 @@ Present:
 4. Any concerns or limitations
 5. Ready to proceed to Round 3 (audit-run)?
 
+## Step 8: Reflect
+
+Before reporting to the user, stop and review your own work:
+
+- **data_types**: are the fixed fields truly universal for this downstream task? Did you miss any field that multiple similar datasets share? Is the metadata dict capturing all dataset-specific fields that might be useful for future metrics?
+- **Loader**: does it handle all edge cases in the data format? What happens with empty fields, missing keys, malformed entries? Did you test entries from different positions in the file (not just the first few)?
+- **Executor**: does the FormatChecker cover all the structural issues you observed in the data during Round 1? Are there format quirks you noticed but didn't write a check for? Does the ExecutabilityChecker validate everything that "correct" means for this dataset?
+
+If you find gaps, fix the code before reporting. Do not leave known issues for later.
+
 ## What NOT to Do
 
 - Do not modify existing data_types.py (Case B). If the field mapping does not work, rethink the mapping, not the data_types.

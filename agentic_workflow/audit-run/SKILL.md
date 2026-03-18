@@ -71,8 +71,30 @@ Summarize findings for the user:
 5. **Recommendations**: what to filter, what to fix, whether the dataset is usable for its intended purpose
 6. **Comparison** (if possible): how does this dataset compare to similar datasets already evaluated in the framework
 
+## Step 6: Reflect -- Validate Results Against Real Data
+
+Do NOT just trust the numbers. Re-read the dataset from scratch with the metric results in hand, and cross-validate:
+
+1. **Re-read the dataset**: go back and read the actual data entries again -- not from memory of Round 1, but fresh. This time you have the metric results, so read with specific questions: "the format_check says 15% error rate -- do I see format issues when I read random entries?" Read entries from beginning, middle, and end of the file.
+
+2. **Read ALL error samples**: for each metric that reports errors, read every error sample in the result JSON. For each one, go back to the raw data entry and verify: is this a real problem, or is the metric/executor wrong?
+
+3. **Read passing samples with suspicion**: read at least 20-30 samples that passed all checks. Look specifically for problems that SHOULD have been caught but weren't. Are there obvious quality issues the metrics missed?
+
+4. **Cross-check distributions against data reality**: if a metric reports an unusual distribution (e.g., 99% pass rate on format but 40% fail on executability), does that match what you see when browsing the actual data? If not, something is off.
+
+5. **Check for blind spots**: compare what you observe in the data now with what the metrics report. Are there quality problems visible in the data that do NOT show up in any metric result? If so, the metrics have a gap.
+
+If the results do not match reality:
+- If a metric flags things that are not real problems -> the executor or metric logic has a bug -> go back and fix
+- If real problems are not flagged -> the metrics are incomplete -> go back to Round 3 and add coverage
+- If the numbers seem right but the interpretation is unclear -> add context from your data reading to the report
+
+Only present the report after you are confident the results reflect the actual state of the data.
+
 ## What NOT to Do
 
 - Do not skip Layer 1 metrics
 - Do not ignore errors in the log files -- if a metric fails, debug it before reporting
 - Do not present raw numbers without interpretation -- the user needs to understand what the numbers mean for their use case
+- Do not trust metric results blindly -- always validate against real data samples

@@ -73,7 +73,7 @@ def _compute_error_type_distribution(error_samples: List[Dict], total: int) -> D
         has_llm_error = False
         
         for err in errors:
-            if 'Train Derivability' in err or 'Query-Answer Relevance' in err:
+            if 'Train Derivability' in err or 'Query-Answer Relevance' in err or 'Tool Selection' in err:
                 has_llm_error = True
             else:
                 has_api_error = True
@@ -212,6 +212,10 @@ def compute_executability(
     relevance_total = 0
     relevance_passed = 0
     
+    # 工具选择相关性统计（LLM Judge，xLAM 等无 final_answer 的数据集）
+    tool_selection_total = 0
+    tool_selection_passed = 0
+    
     # 详细结果
     error_samples = []
     warning_samples = []
@@ -239,7 +243,6 @@ def compute_executability(
             derivability_total += 1
             if stats['train_derivability'].get('derivable'):
                 derivability_passed += 1
-            # 记录 LLM Judge 结果
             llm_judge_results.append({
                 'sample_id': sample.sample_id,
                 'type': 'train_derivability',
@@ -252,12 +255,23 @@ def compute_executability(
             relevance_total += 1
             if stats['query_relevance'].get('relevant'):
                 relevance_passed += 1
-            # 记录 LLM Judge 结果
             llm_judge_results.append({
                 'sample_id': sample.sample_id,
                 'type': 'query_relevance',
                 'result': stats['query_relevance'].get('relevant'),
                 'reason': stats['query_relevance'].get('reason', ''),
+            })
+        
+        # 统计工具选择相关性（Tool Selection Relevance）
+        if stats.get('tool_selection_relevance'):
+            tool_selection_total += 1
+            if stats['tool_selection_relevance'].get('satisfied'):
+                tool_selection_passed += 1
+            llm_judge_results.append({
+                'sample_id': sample.sample_id,
+                'type': 'tool_selection',
+                'result': stats['tool_selection_relevance'].get('satisfied'),
+                'reason': stats['tool_selection_relevance'].get('reason', ''),
             })
         
         if errors:
@@ -302,6 +316,7 @@ def compute_executability(
     warning_rate = with_warnings / total if total > 0 else 0
     derivability_rate = derivability_passed / derivability_total if derivability_total > 0 else 0
     relevance_rate = relevance_passed / relevance_total if relevance_total > 0 else 0
+    tool_selection_rate = tool_selection_passed / tool_selection_total if tool_selection_total > 0 else 0
     
     # 结果
     results = {
@@ -338,6 +353,13 @@ def compute_executability(
             'rate': relevance_rate,
         },
         
+        # LLM Judge 统计 - 工具选择相关性（Tool Selection Relevance）
+        'tool_selection': {
+            'total': tool_selection_total,
+            'passed': tool_selection_passed,
+            'rate': tool_selection_rate,
+        },
+        
         # LLM Judge 详细结果（包含每个样本的判断理由）
         'llm_judge_results': llm_judge_results,
         
@@ -361,7 +383,9 @@ def compute_executability(
     
     # 打印摘要
     _print_summary(results, elapsed, error_samples, derivability_total, derivability_passed, derivability_rate, 
-                   relevance_total, relevance_passed, relevance_rate, total_api_calls, total)
+                   relevance_total, relevance_passed, relevance_rate, 
+                   tool_selection_total, tool_selection_passed, tool_selection_rate,
+                   total_api_calls, total)
     
     return results
 
@@ -418,6 +442,8 @@ def compute_executability_parallel(
     derivability_passed = 0
     relevance_total = 0
     relevance_passed = 0
+    tool_selection_total = 0
+    tool_selection_passed = 0
     
     # 详细结果
     error_samples = []
@@ -482,12 +508,23 @@ def compute_executability_parallel(
                 relevance_total += 1
                 if stats['query_relevance'].get('relevant'):
                     relevance_passed += 1
-                # 记录 LLM Judge 结果
                 llm_judge_results.append({
                     'sample_id': result['sample_id'],
                     'type': 'query_relevance',
                     'result': stats['query_relevance'].get('relevant'),
                     'reason': stats['query_relevance'].get('reason', ''),
+                })
+            
+            # 统计工具选择相关性（Tool Selection Relevance）
+            if stats.get('tool_selection_relevance'):
+                tool_selection_total += 1
+                if stats['tool_selection_relevance'].get('satisfied'):
+                    tool_selection_passed += 1
+                llm_judge_results.append({
+                    'sample_id': result['sample_id'],
+                    'type': 'tool_selection',
+                    'result': stats['tool_selection_relevance'].get('satisfied'),
+                    'reason': stats['tool_selection_relevance'].get('reason', ''),
                 })
             
             if result['has_errors']:
@@ -533,6 +570,7 @@ def compute_executability_parallel(
     warning_rate = with_warnings / total if total > 0 else 0
     derivability_rate = derivability_passed / derivability_total if derivability_total > 0 else 0
     relevance_rate = relevance_passed / relevance_total if relevance_total > 0 else 0
+    tool_selection_rate = tool_selection_passed / tool_selection_total if tool_selection_total > 0 else 0
     
     # 结果
     results = {
@@ -570,6 +608,13 @@ def compute_executability_parallel(
             'rate': relevance_rate,
         },
         
+        # LLM Judge 统计 - 工具选择相关性（Tool Selection Relevance）
+        'tool_selection': {
+            'total': tool_selection_total,
+            'passed': tool_selection_passed,
+            'rate': tool_selection_rate,
+        },
+        
         # LLM Judge 详细结果（包含每个样本的判断理由）
         'llm_judge_results': llm_judge_results,
         
@@ -593,13 +638,17 @@ def compute_executability_parallel(
     
     # 打印摘要
     _print_summary(results, elapsed, error_samples, derivability_total, derivability_passed, derivability_rate, 
-                   relevance_total, relevance_passed, relevance_rate, total_api_calls, total)
+                   relevance_total, relevance_passed, relevance_rate,
+                   tool_selection_total, tool_selection_passed, tool_selection_rate,
+                   total_api_calls, total)
     
     return results
 
 
 def _print_summary(results, elapsed, error_samples, derivability_total, derivability_passed, derivability_rate,
-                   relevance_total, relevance_passed, relevance_rate, total_api_calls, total):
+                   relevance_total, relevance_passed, relevance_rate,
+                   tool_selection_total=0, tool_selection_passed=0, tool_selection_rate=0,
+                   total_api_calls=0, total=0):
     """打印评估摘要"""
     print()
     print("=" * 70)
@@ -617,7 +666,7 @@ def _print_summary(results, elapsed, error_samples, derivability_total, derivabi
     print()
     
     # LLM Judge 统计
-    if derivability_total > 0 or relevance_total > 0:
+    if derivability_total > 0 or relevance_total > 0 or tool_selection_total > 0:
         print(f"【LLM Judge 统计】")
         if derivability_total > 0:
             print(f"  可推导性 (Train Derivability):")
@@ -627,7 +676,11 @@ def _print_summary(results, elapsed, error_samples, derivability_total, derivabi
             print(f"  查询相关性 (Query-Answer Relevance):")
             print(f"    检查样本数: {relevance_total:,}")
             print(f"    通过: {relevance_passed:,} ({relevance_rate:.2%})")
-            print()
+        if tool_selection_total > 0:
+            print(f"  工具选择相关性 (Tool Selection Relevance):")
+            print(f"    检查样本数: {tool_selection_total:,}")
+            print(f"    通过: {tool_selection_passed:,} ({tool_selection_rate:.2%})")
+        print()
     
     # 显示错误类型分布
     if 'error_type_distribution' in results:
@@ -665,7 +718,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Executability 指标评估")
     parser.add_argument("--dataset", type=str, required=True, 
-                        choices=["toolbench", "xlam"],
+                        choices=["toolbench", "xlam", "arcee"],
                         help="数据集名称")
     parser.add_argument("--toolenv-path", type=str, default=None,
                         help="ToolBench toolenv 路径")
@@ -706,6 +759,17 @@ if __name__ == "__main__":
         checker_class = XLAMExecutabilityChecker
         checker_kwargs = {}
         dataset_name = "xLAM-60k"
+    
+    elif args.dataset == "arcee":
+        from loaders import ArceeAgentDataLoader
+        from executor.arcee_agent import ArceeAgentExecutabilityChecker
+        
+        loader = ArceeAgentDataLoader(
+            '/mnt/petrelfs/liuhaoze/datasets/Agent_Data/agent-data/arcee_agent_data_api_only.jsonl'
+        )
+        checker_class = ArceeAgentExecutabilityChecker
+        checker_kwargs = {}
+        dataset_name = "Arcee Agent"
     
     # 设置输出文件
     output_file = args.output

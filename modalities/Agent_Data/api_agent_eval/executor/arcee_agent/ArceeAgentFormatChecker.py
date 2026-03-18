@@ -95,9 +95,8 @@ class ArceeAgentFormatChecker(FormatChecker):
             warnings.extend(tw)
 
         tool_names = [t.name for t in sample.tools]
-        tool_map = {t.name: t for t in sample.tools}
         for i, call in enumerate(sample.api_calls):
-            ce, cw = self._check_api_call(call, i, tool_names, tool_map)
+            ce, cw = self._check_api_call(call, i, tool_names)
             errors.extend(ce)
             warnings.extend(cw)
 
@@ -131,8 +130,11 @@ class ArceeAgentFormatChecker(FormatChecker):
         return errors, warnings
 
     def _check_api_call(self, call: APICall, idx: int,
-                        tool_names: List[str],
-                        tool_map: Dict[str, ToolDefinition]) -> Tuple[List[str], List[str]]:
+                        tool_names: List[str]) -> Tuple[List[str], List[str]]:
+        """
+        格式检查只验证结构正确性：name 存在、arguments 是 dict、API 在工具列表中。
+        参数完整性和类型检查交给 ExecutabilityChecker。
+        """
         errors = []
         warnings = []
 
@@ -146,16 +148,6 @@ class ArceeAgentFormatChecker(FormatChecker):
 
         if call.name != 'FinalAction' and call.name not in tool_names:
             errors.append(f"API Call {idx}: '{call.name}' not in available tools")
-
-        if call.name in tool_map and args_is_dict:
-            tool = tool_map[call.name]
-            provided = set(call.arguments.keys()) if call.arguments else set()
-            for param in (tool.parameters or []):
-                if param.required and not param.optional and param.name not in provided:
-                    if param.default is None:
-                        errors.append(
-                            f"API Call {idx} ({call.name}): missing required param '{param.name}'"
-                        )
 
         return errors, warnings
 

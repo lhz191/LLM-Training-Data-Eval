@@ -171,6 +171,7 @@ class ToolBenchExecutabilityChecker(ExecutabilityChecker):
         warnings = []
         stats = {
             'api_calls_checked': 0,
+            'type_mismatches': 0,
             'toolenv_check_enabled': bool(self.toolenv_path),
             'train_derivability': None,
             'query_relevance': None,
@@ -217,6 +218,19 @@ class ToolBenchExecutabilityChecker(ExecutabilityChecker):
                             errors.append(
                                 f"API Call {i} ({call.name}): missing required parameter '{param.name}' (sample tool)"
                             )
+                
+                # 2.3b Argument Type Check - 参数类型匹配
+                if call.arguments:
+                    param_map = {p.name: p for p in (tool.parameters or [])}
+                    for arg_name, arg_value in call.arguments.items():
+                        if arg_name in param_map:
+                            param = param_map[arg_name]
+                            type_err = self._check_argument_type(arg_value, param.type)
+                            if type_err:
+                                warnings.append(
+                                    f"API Call {i} ({call.name}) param '{arg_name}': {type_err}"
+                                )
+                                stats['type_mismatches'] += 1
             
             # 2.4 Required Parameter Check (Toolenv) - 基于全局工具库的必需参数检查
             if self.toolenv_path and self.api_mapping:
@@ -271,6 +285,44 @@ class ToolBenchExecutabilityChecker(ExecutabilityChecker):
                 errors.append(f"Query-Answer Relevance: {reason}")
         
         return errors, warnings, stats
+    
+    def _check_argument_type(self, value: Any, declared_type: Optional[str]) -> Optional[str]:
+        """检查参数值类型是否与声明类型匹配"""
+        if not declared_type:
+            return None
+
+        base_type = declared_type.split(',')[0].strip().lower()
+        if 'optional' in base_type:
+            base_type = base_type.replace('optional', '').strip()
+
+        actual_type = type(value).__name__
+
+        if base_type in ('str', 'string'):
+            if not isinstance(value, str):
+                return f"expected str, got {actual_type}"
+        elif base_type in ('int', 'integer'):
+            if not isinstance(value, int) or isinstance(value, bool):
+                if isinstance(value, str):
+                    try:
+                        int(value)
+                        return None
+                    except ValueError:
+                        return f"expected int, got {actual_type} ('{value}')"
+                return f"expected int, got {actual_type}"
+        elif base_type in ('float', 'number'):
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                return f"expected float, got {actual_type}"
+        elif base_type in ('bool', 'boolean'):
+            if not isinstance(value, bool):
+                return f"expected bool, got {actual_type}"
+        elif base_type in ('list', 'array'):
+            if not isinstance(value, list):
+                return f"expected list, got {actual_type}"
+        elif base_type in ('dict', 'object'):
+            if not isinstance(value, dict):
+                return f"expected dict, got {actual_type}"
+
+        return None
     
     def _check_keyword_derivability(self, source_text: str, target_text: str) -> Tuple[bool, str]:
         """

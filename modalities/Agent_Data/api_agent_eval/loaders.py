@@ -903,7 +903,13 @@ class ArceeAgentDataLoader(BaseLoader):
         for text in assistant_texts:
             api_calls.extend(self._parse_glaive_calls(text))
 
-        final_answer = assistant_texts[-1] if assistant_texts else ""
+        # final_answer: 取最后一条非工具调用的 gpt 消息
+        # 如果最后一条 gpt 消息能被解析为工具调用，说明对话以调用结尾，没有 final answer
+        final_answer = None
+        if assistant_texts:
+            last_text = assistant_texts[-1]
+            if not self._parse_glaive_calls(last_text):
+                final_answer = last_text
 
         return APIAgentSample(
             query=query,
@@ -1055,6 +1061,10 @@ class ArceeAgentDataLoader(BaseLoader):
 
         tools = self._parse_salesforce_tools(system_prompt)
         api_calls = self._parse_salesforce_calls(final_answer)
+
+        # 如果最后一条 gpt 消息包含 <tool_call>，说明是工具调用而非 final answer
+        if '<tool_call>' in final_answer:
+            final_answer = None
 
         return APIAgentSample(
             query=query,

@@ -59,23 +59,20 @@ def _get_loader(dataset_name, data_path):
     """Get the appropriate loader from math_eval."""
     from loaders import (
         MetaMathQALoader,
-        OpenMathLoader,
+        OpenMathInstructLoader,
         GSM8KAugLoader,
         LILALoader,
-        NuminaMathCoTLoader,
     )
 
     name = dataset_name.lower().replace("_", "").replace("-", "").replace(" ", "")
     loaders = {
-        "openmath": OpenMathLoader,
-        "openmathinstruct1": OpenMathLoader,
-        "openmathinstruct": OpenMathLoader,
+        "openmath": OpenMathInstructLoader,
+        "openmathinstruct": OpenMathInstructLoader,
+        "openmathinstruct1": OpenMathInstructLoader,
         "metamath": MetaMathQALoader,
         "metamathqa": MetaMathQALoader,
         "gsm8kaug": GSM8KAugLoader,
         "lila": LILALoader,
-        "numinamath": NuminaMathCoTLoader,
-        "numinamathcot": NuminaMathCoTLoader,
     }
     loader_cls = loaders.get(name)
     if loader_cls is None:
@@ -177,8 +174,11 @@ def _build_f_exec(executor_type):
     def f_exec(step: str) -> bool:
         if not any(kw in step for kw in ["=", "print", "import", "def ", "return"]):
             return True
-        result, error = code_exec.execute(step)
-        return error is None or error == ""
+        try:
+            result, error = code_exec.execute(step)
+            return error is None or error == ""
+        except Exception:
+            return True
 
     return f_exec
 

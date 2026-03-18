@@ -5,7 +5,7 @@ Arcee Agent Data 执行器
 
 包含:
 - ArceeAgentFormatChecker: 格式检查器（5 种子集格式）
-- ArceeAgentExecutabilityChecker: 可执行性检查器（静态）
+- ArceeAgentExecutabilityChecker: 可执行性检查器（静态 + LLM Judge）
 """
 
 from .ArceeAgentFormatChecker import ArceeAgentFormatChecker

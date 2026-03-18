@@ -86,42 +86,38 @@ class XLAMFormatChecker(FormatChecker):
         if tool.parameters is None:
             errors.append(f"Tool {idx} ({tool.name}): missing 'parameters'")
         
-        # 参数标注一致性检查
+        # 参数标注一致性检查（schema 元数据问题，归为 warning）
         for param in (tool.parameters or []):
-            param_errors = self._check_param_annotation(tool.name, idx, param)
-            errors.extend(param_errors)
+            param_warnings = self._check_param_annotation(tool.name, idx, param)
+            warnings.extend(param_warnings)
         
-            # required 和 optional 互补性检查
-            # 同为 True 或同为 False 都是错误
             if param.required == param.optional:
                 if param.required and param.optional:
                     errors.append(
                         f"Tool {idx} ({tool.name}) param '{param.name}': "
-                        f"INVALID STATE - both required and optional are True"
+                        f"SCHEMA ERROR - both required and optional are True"
                     )
                 else:
                     errors.append(
                         f"Tool {idx} ({tool.name}) param '{param.name}': "
-                        f"INVALID STATE - both required and optional are False"
+                        f"SCHEMA ERROR - both required and optional are False"
                     )
         
         return errors, warnings
     
     def _check_param_annotation(self, tool_name: str, tool_idx: int, param: Parameter) -> List[str]:
-        """检查参数标注一致性"""
-        errors = []
+        """检查参数标注一致性（均为 schema 元数据问题，返回 warnings）"""
+        warnings = []
         description = param.description or ''
         has_default_field = param.default is not None
         default_in_desc = 'default' in description.lower() or 'defaults to' in description.lower()
         
-        # Check 1: default mentioned in description but not in 'default' field
         if default_in_desc and not has_default_field:
-            errors.append(
+            warnings.append(
                 f"Tool {tool_idx} ({tool_name}) param '{param.name}': "
                 f"ANNOTATION ISSUE - default mentioned in description but 'default' field missing"
             )
         
-        # Check 2: default value type doesn't match declared type
         if has_default_field and param.type:
             base_type = param.type.split(',')[0].strip().lower()
             default_val = param.default
@@ -148,11 +144,11 @@ class XLAMFormatChecker(FormatChecker):
                         pass
             
             if type_mismatch:
-                errors.append(
+                warnings.append(
                     f"Tool {tool_idx} ({tool_name}) param '{param.name}': TYPE MISMATCH - {type_mismatch}"
                 )
         
-        return errors
+        return warnings
     
     def _check_api_call(self, call: APICall, idx: int,
                         tool_names: List[str],

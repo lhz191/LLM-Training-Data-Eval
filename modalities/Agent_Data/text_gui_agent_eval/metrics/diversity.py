@@ -836,7 +836,7 @@ def compute_diversity(
     print(f"\n📊 [4/6] 域名多样性...")
     domain_div = compute_domain_diversity(domains)
 
-    print(f"\n📊 [5/6] 任务语义多样性 (Sentence Embedding)...
+    print(f"\n📊 [5/6] 任务语义多样性 (Sentence Embedding)...")
     # 优先使用本地模型
     local_model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models', embedding_model)
     if os.path.exists(local_model_path):

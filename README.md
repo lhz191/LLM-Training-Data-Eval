@@ -16,6 +16,10 @@
 
 ## 📖 Overview
 
+<div align="center">
+<img src="assets/framework_overview.png" alt="Framework Overview" width="800">
+</div>
+
 This framework provides systematic evaluation metrics for LLM training data quality across multiple data modalities:
 
 - **Symbolic & Logical Data** - Mathematical reasoning, code, formal logic
